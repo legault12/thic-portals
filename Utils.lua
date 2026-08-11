@@ -121,6 +121,88 @@ function Utils.findAllKeywordPositions(message, keywordList)
     return results
 end
 
+-- Words that mark the location straight after them as where the customer wants to GO.
+local DESTINATION_MARKERS = {
+    ["to"] = true,
+    ["2"] = true,
+    ["too"] = true,
+    [">"] = true,
+    [">>"] = true,
+    ["->"] = true,
+    ["=>"] = true
+}
+
+-- Words that mark the location straight after them as where the customer already IS.
+local ORIGIN_MARKERS = {
+    ["from"] = true,
+    ["in"] = true,
+    ["at"] = true,
+    ["im"] = true,
+    ["i'm"] = true
+}
+
+local function classifyPrecedingWord(word)
+    if not word then
+        return 0
+    end
+
+    if DESTINATION_MARKERS[word] then
+        return 1
+    elseif ORIGIN_MARKERS[word] then
+        return -1
+    end
+
+    -- Retry without surrounding punctuation, so "to," and "(from" still count.
+    local stripped = word:gsub("^%p+", ""):gsub("%p+$", "")
+
+    if DESTINATION_MARKERS[stripped] then
+        return 1
+    elseif ORIGIN_MARKERS[stripped] then
+        return -1
+    end
+
+    return 0
+end
+
+-- Function to work out which location in a message the customer actually wants to travel to.
+--
+-- Returns the same (position, keyword) pair as findKeywordPosition so it can be swapped in
+-- directly, but understands that "wtb port from sw to if" means Ironforge, not Stormwind.
+-- The word immediately before each location decides: "to if" is a destination, "from sw" and
+-- "in sw" are where they are standing. With nothing to go on it keeps the old behaviour and
+-- takes the first location mentioned.
+function Utils.findRequestedDestination(message, keywordList)
+    if not message or not keywordList then
+        return nil, nil
+    end
+
+    local candidates = Utils.findAllKeywordPositions(message, keywordList)
+
+    if #candidates == 0 then
+        return nil, nil
+    elseif #candidates == 1 then
+        return candidates[1].position, candidates[1].keyword
+    end
+
+    local padded = " " .. message:lower() .. " "
+    local best = candidates[1]
+    local bestScore = nil
+
+    for _, candidate in ipairs(candidates) do
+        local precedingWord = padded:sub(1, candidate.position - 1):match("(%S+)%s*$")
+        local score = classifyPrecedingWord(precedingWord)
+
+        -- Take a better score, and among equally marked destinations take the later one,
+        -- because "from A to B" puts the location they actually want last.
+        if bestScore == nil or score > bestScore or (score == bestScore and score > 0) then
+            bestScore = score
+            best = candidate
+        end
+    end
+
+    return best.position, best.keyword
+end
+
 -- Function to replace placeholders in messages with actual values
 function Utils.replacePlaceholders(message, destination)
     if not message then

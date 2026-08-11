@@ -47,7 +47,7 @@ local function updatePendingInviteDestination(playerName, message)
         return
     end
 
-    local destinationPosition, destinationKeyword = Utils.findKeywordPosition(message,
+    local destinationPosition, destinationKeyword = Utils.findRequestedDestination(message,
         Config.Settings.DestinationKeywords)
     if destinationPosition and Events.pendingInvites[playerName] then
         Events.pendingInvites[playerName].destination = destinationKeyword
@@ -104,7 +104,7 @@ end
 -- Function to handle invite and message for common phrases
 function InviteTrade.handleCommonPhraseInvite(message)
     local phrase = Utils.messageHasPhraseOrKeyword(message, Config.Settings.commonPhrases)
-    local destinationPosition, destinationKeyword = Utils.findKeywordPosition(message,
+    local destinationPosition, destinationKeyword = Utils.findRequestedDestination(message,
         Config.Settings.DestinationKeywords)
 
     if phrase then
@@ -120,7 +120,7 @@ end
 
 -- Function to handle invites with destination keywords
 function InviteTrade.handleDestinationOnlyInvite(message)
-    local destinationPosition, destinationKeyword = Utils.findKeywordPosition(message,
+    local destinationPosition, destinationKeyword = Utils.findRequestedDestination(message,
         Config.Settings.DestinationKeywords)
 
     if destinationPosition then
@@ -146,7 +146,7 @@ function InviteTrade.handleAdvancedKeywordInvite(message)
                     " (position: " .. intentPosition .. ")")
 
         local servicePosition, serviceKeyword = Utils.findKeywordPosition(message, Config.Settings.ServiceKeywords)
-        local destinationPosition, destKeyword = Utils.findKeywordPosition(message, Config.Settings.DestinationKeywords)
+        local destinationPosition, destKeyword = Utils.findRequestedDestination(message, Config.Settings.DestinationKeywords)
 
         if servicePosition and servicePosition > intentPosition then
             matched = true
