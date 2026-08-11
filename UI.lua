@@ -697,8 +697,9 @@ function UI.updateDestinationChoices(sender, inviteData)
 
     -- Aliases for one city ("sw" and "stormwind") collapse to a single chip, but only when both
     -- resolve through the explicit map - see Utils.dedupeDestinationCandidates.
-    local candidates = Utils.findAllKeywordPositions(inviteData.originalMessage,
-        Config.Settings.DestinationKeywords)
+    local candidates = Utils.dedupeDestinationCandidates(
+        Utils.findAllKeywordPositions(inviteData.originalMessage, Config.Settings.DestinationKeywords),
+        inviteData.destination)
 
     -- One candidate (or none) needs no disambiguation - keep the plain text label.
     if #candidates < 2 then

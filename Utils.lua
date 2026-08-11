@@ -343,48 +343,128 @@ function Utils.isPlayerBanned(player)
     return false
 end
 
-function Utils.getMatchingPortal(destination)
-    local portal = {
-        matched = false,
-        spellID = 10059,
-        spellName = "Portal: Stormwind",
-        locationName = "Stormwind"
-    }
+-- Every shipped DestinationKeywords entry, mapped to the canonical city it means. Declared rather
+-- than inferred: the old letter-frequency scoring sent "org" to Ironforge, "sm" and "ston" to
+-- Stormwind, because it counted letters anywhere in the name, ignoring order and duplicates.
+Utils.DestinationAliases = {
+    ["darn"] = "Darnassus",
+    ["darnassuss"] = "Darnassus",
+    ["darnas"] = "Darnassus",
+    ["darrna"] = "Darnassus",
+    ["darnaas"] = "Darnassus",
+    ["darnassus"] = "Darnassus",
+    ["darnasuss"] = "Darnassus",
+    ["darna"] = "Darnassus",
+    ["darnasus"] = "Darnassus",
+    --
+    ["sw"] = "Stormwind",
+    ["stormwind"] = "Stormwind",
+    ["storm wind"] = "Stormwind",
+    --
+    ["if"] = "Ironforge",
+    ["ironforge"] = "Ironforge",
+    ["iron forge"] = "Ironforge",
+    --
+    ["exodar"] = "Exodar",
+    ["exo"] = "Exodar",
+    --
+    ["theramore"] = "Theramore",
+    ["thera"] = "Theramore",
+    ["tmore"] = "Theramore",
+    --
+    ["org"] = "Orgrimmar",
+    ["orgrimmar"] = "Orgrimmar",
+    ["orgri"] = "Orgrimmar",
+    ["orgim"] = "Orgrimmar",
+    --
+    ["tb"] = "Thunder Bluff",
+    ["thunder bluff"] = "Thunder Bluff",
+    ["thunderbluff"] = "Thunder Bluff",
+    ["thunder"] = "Thunder Bluff",
+    --
+    ["uc"] = "Undercity",
+    ["undercity"] = "Undercity",
+    ["under city"] = "Undercity",
+    --
+    ["silvermoon"] = "Silvermoon",
+    ["silver moon"] = "Silvermoon",
+    ["sm"] = "Silvermoon",
+    ["silv"] = "Silvermoon",
+    --
+    ["stonard"] = "Stonard",
+    ["ston"] = "Stonard",
+    --
+    ["shattrath"] = "Shattrath",
+    ["shatt"] = "Shattrath",
+    ["shat"] = "Shattrath",
+    ["shath"] = "Shattrath"
+}
 
+-- Canonical city -> the portal spell that goes there, replacing the old if/elseif chain.
+-- Shattrath is the one destination both factions can reach, via different spells.
+Utils.PortalSpells = {
+    ["Darnassus"] = {
+        spellID = 11419
+    },
+    ["Stormwind"] = {
+        spellID = 10059
+    },
+    ["Ironforge"] = {
+        spellID = 11416
+    },
+    ["Exodar"] = {
+        spellID = 32266
+    },
+    ["Theramore"] = {
+        spellID = 49360
+    },
+    ["Orgrimmar"] = {
+        spellID = 11417
+    },
+    ["Thunder Bluff"] = {
+        spellID = 11420
+    },
+    ["Undercity"] = {
+        spellID = 11418
+    },
+    ["Silvermoon"] = {
+        spellID = 32267
+    },
+    ["Stonard"] = {
+        spellID = 49361
+    },
+    ["Shattrath"] = {
+        byFaction = {
+            Alliance = 33691,
+            Horde = 35717
+        }
+    }
+}
+
+-- The canonical city a keyword names, or nil when it is not one we ship a mapping for. Custom
+-- keywords added through the options panel fall through here and are resolved by the heuristic.
+function Utils.resolveCanonicalDestination(destination)
     if not destination then
-        return portal
+        return nil
     end
 
-    -- Use the destination value to initially find the absolute spell match (Portal: Stormwind or Portal: Ironforge or ...)
-    -- If no match is found, return nil
+    return Utils.DestinationAliases[destination:lower()]
+end
 
-    -- Destination could be "if, "ironforge", "sw", "stormwind", "darn", "darna", "darnas", "darnasuss", ... - we need to take account for typos, abbreviations, etc.
-    -- The best bet is to check every letter of the destination word and check if it matches in the destination part of the Portal: MATCH spell name
-    -- The official spell destination name with the most matches is the correct one
-    -- If there are multiple matching names, we can use the one with the most matches
-
-    -- Example: destination = "darn" produces "Portal: Darnassus" as the best match
-
-    -- Config.Portals = {
-    --     "Portal: Darnassus",
-    --     "Portal: Stormwind",
-    --     "Portal: Ironforge",
-    --     "Portal: Orgrimmar",
-    --     "Portal: Thunder Bluff",
-    --     "Portal: Undercity",
-    -- }
-
+-- The original letter-frequency scoring, kept only as the fallback for user-added keywords that
+-- the explicit map knows nothing about. Wrong for several shipped abbreviations, which is exactly
+-- why the map exists - but removing it outright would break custom keywords that currently work.
+function Utils.matchPortalByHeuristic(destination)
     local destinationLength = string.len(destination)
     local bestMatch = nil
     local maxMatches = 0
-    for _, portalName in ipairs(Config.Portals) do
-        local spellName = portalName:match("Portal: (.+)")
-        local spellDestination = spellName:lower()
 
+    for _, portalName in ipairs(Config.Portals) do
+        local spellDestination = portalName:match("Portal: (.+)"):lower()
         local matches = 0
+
         for i = 1, destinationLength do
-            local letter = destination:sub(i, i)
-            if spellDestination:find(letter) then
+            if spellDestination:find(destination:sub(i, i), 1, true) then
                 matches = matches + 1
             end
         end
@@ -395,50 +475,118 @@ function Utils.getMatchingPortal(destination)
         end
     end
 
-    if bestMatch then
-        Utils.debugPrint("Best match for destination: " .. bestMatch)
+    if not bestMatch then
+        return nil
+    end
 
-        local spellID = nil
+    return bestMatch:match("Portal: (.+)")
+end
 
-        if bestMatch == "Portal: Darnassus" then
-            spellID = 11419
-        elseif bestMatch == "Portal: Stormwind" then
-            spellID = 10059
-        elseif bestMatch == "Portal: Ironforge" then
-            spellID = 11416
-        elseif bestMatch == "Portal: Orgrimmar" then
-            spellID = 11417
-        elseif bestMatch == "Portal: Thunder Bluff" then
-            spellID = 11420
-        elseif bestMatch == "Portal: Undercity" then
-            spellID = 11418
-        elseif bestMatch == "Portal: Exodar" then
-            spellID = 32266
-        elseif bestMatch == "Portal: Theramore" then
-            spellID = 49360
-        elseif bestMatch == "Portal: Silvermoon" then
-            spellID = 32267
-        elseif bestMatch == "Portal: Stonard" then
-            spellID = 49361
-        elseif bestMatch == "Portal: Shattrath" then
-            -- Both Alliance and Horde can portal to Shattrath, but they have different spell IDs, so we need to check the player's faction first
-            local englishFaction, _ = UnitFactionGroup("player")
-            if englishFaction == "Alliance" then
-                spellID = 33691
-            elseif englishFaction == "Horde" then
-                spellID = 35717
+-- Resolve a destination keyword to the portal we should cast.
+--
+-- Explicit map first, heuristic only for keywords it does not cover. The returned shape is
+-- unchanged: matched/spellID/spellName/locationName, plus canonical, which is set only when the
+-- explicit map answered - callers use that to tell a known city from a guess.
+function Utils.getMatchingPortal(destination)
+    local portal = {
+        matched = false,
+        spellID = 10059,
+        spellName = "Portal: Stormwind",
+        locationName = "Stormwind",
+        canonical = nil
+    }
+
+    if not destination then
+        return portal
+    end
+
+    local canonical = Utils.resolveCanonicalDestination(destination)
+    local resolvedByMap = canonical ~= nil
+
+    if not canonical then
+        canonical = Utils.matchPortalByHeuristic(destination)
+    end
+
+    if not canonical then
+        return portal
+    end
+
+    local spell = Utils.PortalSpells[canonical]
+
+    if not spell then
+        return portal
+    end
+
+    local spellID = spell.spellID
+
+    if not spellID and spell.byFaction then
+        local englishFaction = UnitFactionGroup("player")
+        spellID = spell.byFaction[englishFaction]
+    end
+
+    Utils.debugPrint("Destination \"" .. destination .. "\" resolved to " .. canonical ..
+                         (resolvedByMap and " (alias map)" or " (heuristic fallback)"))
+
+    return {
+        matched = true,
+        spellID = spellID,
+        spellName = "Portal: " .. canonical,
+        locationName = canonical,
+        canonical = resolvedByMap and canonical or nil
+    }
+end
+
+-- Collapse keywords that are aliases for the same city, so "port to if from sw, im in stormwind"
+-- offers two chips rather than three. Only collapses when BOTH keywords resolve through the
+-- explicit map: the heuristic is not trustworthy enough to merge on, and merging on it would hide
+-- a real choice (it scores "org" and "if" identically, so they would become one chip).
+function Utils.dedupeDestinationCandidates(candidates, selectedKeyword)
+    local deduped = {}
+    local seenCanonical = {}
+
+    -- Which alias to keep for the selected destination's city. Keeping the first alias named would
+    -- discard the selected one whenever it is not the first: "from stormwind to sw" with "sw"
+    -- selected would keep "stormwind", and the selected destination would then be neither pinned
+    -- nor shown in gold, because both are matched by keyword.
+    local preferred, preferredCanonical
+
+    if selectedKeyword then
+        preferredCanonical = Utils.resolveCanonicalDestination(selectedKeyword)
+
+        if preferredCanonical then
+            for _, candidate in ipairs(candidates) do
+                if candidate.keyword == selectedKeyword then
+                    preferred = candidate
+                    break
+                end
             end
         end
 
-        portal = {
-            matched = true,
-            spellID = spellID,
-            spellName = bestMatch,
-            locationName = bestMatch:match("Portal: (.+)")
-        }
+        -- Selected keyword is not among the candidates: nothing to preserve.
+        if not preferred then
+            preferredCanonical = nil
+        end
     end
 
-    return portal
+    for _, candidate in ipairs(candidates) do
+        local canonical = Utils.resolveCanonicalDestination(candidate.keyword)
+
+        if not canonical then
+            -- Unmapped/custom keyword: always kept, never merged with anything.
+            deduped[#deduped + 1] = candidate
+        elseif not seenCanonical[canonical] then
+            seenCanonical[canonical] = true
+
+            -- Hold the group's place in the message, but keep the selected alias's keyword.
+            if canonical == preferredCanonical then
+                deduped[#deduped + 1] = preferred
+            else
+                deduped[#deduped + 1] = candidate
+            end
+        end
+    end
+
+    return deduped
 end
 -- Convert the copper value to a gold, silver, and copper formatted string
 function Utils.formatCopperValue(totalCost)
