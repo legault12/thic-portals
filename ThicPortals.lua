@@ -24,6 +24,7 @@ frame:RegisterEvent("SPELLS_CHANGED")
 frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 frame:RegisterEvent("UI_INFO_MESSAGE")
 frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 -- Set the event handler function
 frame:SetScript("OnEvent", Events.onEvent)

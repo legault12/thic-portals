@@ -40,7 +40,6 @@ UI.currentTicketIndex = 1
 
 -- Helper to update the ticket frame with current ticket
 local currentTicker = nil
-local viewingMessage = false
 
 local function addCheckbox(group, label, checkbox, initialValue, callback, tooltipText)
     -- Add spacer between checkboxes
@@ -310,6 +309,31 @@ function UI.createToggleButton()
 end
 
 -- Function to apply an icon texture representing the portal spell attributed to the button
+-- SetAttribute and SetEnabled on a SecureActionButtonTemplate are protected while in combat.
+-- Run the update now if we can, otherwise stash it and replay it on PLAYER_REGEN_ENABLED.
+-- Only the most recent update is kept, since each one rebuilds the button from scratch.
+function UI.runWhenOutOfCombat(updateFunction)
+    if InCombatLockdown() then
+        UI.pendingSecureUpdate = updateFunction
+        return false
+    end
+
+    UI.pendingSecureUpdate = nil
+    updateFunction()
+    return true
+end
+
+-- Called on PLAYER_REGEN_ENABLED to apply whatever was deferred during combat.
+function UI.flushPendingSecureUpdate()
+    local updateFunction = UI.pendingSecureUpdate
+    UI.pendingSecureUpdate = nil
+
+    if updateFunction then
+        Utils.debugPrint("Leaving combat - applying deferred ticket button update.")
+        updateFunction()
+    end
+end
+
 function UI.setIconSpellTexture(actionButton, portal)
     if not actionButton.icon then
         -- Apply the icon texture to the button
@@ -405,6 +429,163 @@ function UI.setTradeIcon(inviteData)
     end)
 end
 
+-- Roughly two wrapped lines at the ticket's width. Anything longer is trimmed and the full
+-- text stays available on hover, so the ticket never grows unpredictably tall.
+local REQUEST_TEXT_MAX_CHARS = 60
+local DESTINATION_CHIP_SPACING = 4
+
+local function truncateForDisplay(text, maxChars)
+    if #text <= maxChars then
+        return text
+    end
+
+    local cut = text:sub(1, maxChars)
+
+    -- Prefer breaking on a word boundary, but only if it does not throw away most of the text.
+    local lastSpace = cut:find("%s[^%s]*$")
+    if lastSpace and lastSpace > maxChars * 0.6 then
+        cut = cut:sub(1, lastSpace - 1)
+    else
+        -- Otherwise make sure we did not slice through a multi-byte UTF-8 character.
+        while #cut > 0 and cut:byte(#cut) >= 128 and cut:byte(#cut) <= 191 do
+            cut = cut:sub(1, #cut - 1)
+        end
+    end
+
+    return cut .. "..."
+end
+
+-- Show the customer's own words on the ticket, so the user never has to scroll trade chat
+-- back to work out what was actually asked for.
+function UI.updateRequestText(inviteData)
+    local ticketFrame = UI.ticketFrame
+
+    if not ticketFrame or not ticketFrame.requestText then
+        return
+    end
+
+    local message = inviteData.originalMessage
+
+    if not message or message == "" then
+        ticketFrame.requestText:SetText("|cff808080(no request recorded)|r")
+        ticketFrame.requestHitBox.message = nil
+        return
+    end
+
+    ticketFrame.requestText:SetText("\"" .. truncateForDisplay(message, REQUEST_TEXT_MAX_CHARS) .. "\"")
+    ticketFrame.requestHitBox.message = message
+end
+
+-- Destination chips. When a request names more than one city we cannot know which the customer
+-- meant, so show every candidate and let the user pick. Buttons are pooled on the ticket frame
+-- and reused, because frames cannot be destroyed once created.
+local function acquireDestinationChip(ticketFrame, index)
+    ticketFrame.destinationChips = ticketFrame.destinationChips or {}
+
+    local chip = ticketFrame.destinationChips[index]
+
+    if not chip then
+        chip = CreateFrame("Button", nil, ticketFrame.labelContainer)
+        chip:SetHeight(14)
+
+        local label = chip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        label:SetPoint("CENTER")
+        chip.label = label
+
+        local highlight = chip:CreateTexture(nil, "HIGHLIGHT")
+        highlight:SetAllPoints()
+        highlight:SetTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+        highlight:SetBlendMode("ADD")
+
+        ticketFrame.destinationChips[index] = chip
+    end
+
+    return chip
+end
+
+local function hideDestinationChipsFrom(ticketFrame, fromIndex)
+    if not ticketFrame.destinationChips then
+        return
+    end
+
+    for i = fromIndex, #ticketFrame.destinationChips do
+        ticketFrame.destinationChips[i]:Hide()
+    end
+end
+
+function UI.updateDestinationChoices(sender, inviteData)
+    local ticketFrame = UI.ticketFrame
+
+    if not ticketFrame or not ticketFrame.destinationLabel then
+        return
+    end
+
+    local candidates = Utils.findAllKeywordPositions(inviteData.originalMessage,
+        Config.Settings.DestinationKeywords)
+
+    -- One candidate (or none) needs no disambiguation - keep the plain text label.
+    if #candidates < 2 then
+        ticketFrame.destinationValue:Show()
+        hideDestinationChipsFrom(ticketFrame, 1)
+        return
+    end
+
+    ticketFrame.destinationValue:Hide()
+
+    local anchor = ticketFrame.destinationLabel
+    local offsetX = 5
+
+    for index, candidate in ipairs(candidates) do
+        local chip = acquireDestinationChip(ticketFrame, index)
+        local keyword = candidate.keyword
+
+        chip.label:SetText(keyword)
+
+        if inviteData.destination == keyword then
+            chip.label:SetTextColor(1, 0.82, 0) -- gold: the destination we will cast
+        else
+            chip.label:SetTextColor(0.5, 0.5, 0.5) -- grey: an alternative the request also named
+        end
+
+        chip:SetWidth(chip.label:GetStringWidth() + 8)
+        chip:ClearAllPoints()
+        chip:SetPoint("LEFT", anchor, "RIGHT", offsetX, 0)
+
+        chip:SetScript("OnClick", function()
+            if inviteData.destination == keyword then
+                return
+            end
+
+            inviteData.destination = keyword
+            -- Stop a later whisper from silently overwriting a deliberate choice.
+            inviteData.destinationLocked = true
+
+            Utils.print("Destination for " .. sender .. " set to " .. keyword .. ".")
+
+            UI.updateTicketFrame()
+        end)
+
+        chip:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Send " .. sender .. " to " .. keyword)
+            GameTooltip:AddLine("This request named more than one location - click to choose.", 1, 1, 1,
+                true)
+            GameTooltip:Show()
+        end)
+
+        chip:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        chip:Show()
+
+        anchor = chip
+        offsetX = DESTINATION_CHIP_SPACING
+    end
+
+    hideDestinationChipsFrom(ticketFrame, #candidates + 1)
+end
+
 -- Helper to update ticketList from pendingInvites
 function UI.updateTicketList()
     UI.ticketList = {}
@@ -456,15 +637,10 @@ function UI.updateTicketFrame()
             "TICKET (" .. tostring(UI.currentTicketIndex) .. "/" .. tostring(UI.totalTickets) .. ")")
     end
 
-    -- Update original message if present (for message view)
-    if UI.ticketFrame.originalMessageValue and UI.ticketFrame.viewingMessage then
-        UI.ticketFrame.originalMessageValue:SetText(inviteData.originalMessage or "")
-    end
-
-    -- Update sender name in message view
-    if UI.ticketFrame.messageSenderValue and UI.ticketFrame.viewingMessage then
-        UI.ticketFrame.messageSenderValue:SetText(sender)
-    end
+    -- Show the request as it was actually typed, plus a choice of destinations when the
+    -- customer named more than one ("wtb port from sw to if").
+    UI.updateRequestText(inviteData)
+    UI.updateDestinationChoices(sender, inviteData)
 
     -- Enable/disable navigation buttons based on current index
     if UI.ticketFrame.prevButton then
@@ -488,18 +664,25 @@ function UI.updateTicketFrame()
     -- Save the matching portal details to the invite tracker
     inviteData.portal = Utils.getMatchingPortal(destination) -- Set the portal button icon based on the invite data
 
-    -- Only hide the portal/trade icon if the user has travelled (not just paid)
-    if Config.CurrentAlivePortals and Config.CurrentAlivePortals[inviteData.portal.spellName] then
-        UI.setTradeIcon({
-            actionButton = UI.ticketFrame.actionButton,
-            name = inviteData.name,
-            targetted = inviteData.targetted
-        })
-    else
-        UI.setIconSpell({
-            actionButton = UI.ticketFrame.actionButton,
-            portal = inviteData.portal
-        }, destination)
+    -- Only hide the portal/trade icon if the user has travelled (not just paid).
+    -- This writes secure attributes, so it has to wait if we are in combat.
+    local applied = UI.runWhenOutOfCombat(function()
+        if Config.CurrentAlivePortals and Config.CurrentAlivePortals[inviteData.portal.spellName] then
+            UI.setTradeIcon({
+                actionButton = UI.ticketFrame.actionButton,
+                name = inviteData.name,
+                targetted = inviteData.targetted
+            })
+        else
+            UI.setIconSpell({
+                actionButton = UI.ticketFrame.actionButton,
+                portal = inviteData.portal
+            }, destination)
+        end
+    end)
+
+    if not applied then
+        Utils.debugPrint("In combat - deferring ticket button update for " .. sender .. ".")
     end
 
     -- Remove Button
@@ -639,7 +822,7 @@ function UI.showPaginatedTicketWindow()
     if not UI.ticketFrame then
         -- Create the main frame (only once)
         local ticketFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        ticketFrame:SetSize(220, 270)
+        ticketFrame:SetSize(220, 320)
         ticketFrame:SetPoint("CENTER", UIParent, "CENTER", UIParent:GetWidth() * 0.3, 0)
         ticketFrame:SetBackdrop({
             bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -672,6 +855,7 @@ function UI.showPaginatedTicketWindow()
         local labelContainer = CreateFrame("Frame", nil, ticketFrame)
         labelContainer:SetSize(200, 100)
         labelContainer:SetPoint("TOP", ticketFrame, "TOP", 0, -10)
+        ticketFrame.labelContainer = labelContainer
 
         local title = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         title:SetPoint("TOP", 0, -20)
@@ -688,6 +872,7 @@ function UI.showPaginatedTicketWindow()
         local destinationLabel = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         destinationLabel:SetPoint("TOPLEFT", senderLabel, "BOTTOMLEFT", 0, -10)
         destinationLabel:SetText("Destination:")
+        ticketFrame.destinationLabel = destinationLabel
         local destinationValue = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         destinationValue:SetPoint("LEFT", destinationLabel, "RIGHT", 5, 0)
         ticketFrame.destinationValue = destinationValue
@@ -697,26 +882,43 @@ function UI.showPaginatedTicketWindow()
         distanceLabel:SetText("Distance: N/A")
         ticketFrame.distanceLabel = distanceLabel
 
-        -- Add an icon to the top left that allows us to switch to a "display original message mode"
-        local iconButton = CreateFrame("Button", nil, ticketFrame)
-        iconButton:SetSize(20, 20)
-        iconButton:SetPoint("TOPLEFT", 12, -12)
-        iconButton:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
-        iconButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
-        ticketFrame.iconButton = iconButton
+        -- The customer's own words, shown permanently. The destination guess can be wrong, but
+        -- the request never is - so it stays on screen next to the portal button rather than
+        -- behind a mode switch.
+        local requestText = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        requestText:SetPoint("TOPLEFT", distanceLabel, "BOTTOMLEFT", 0, -12)
+        requestText:SetWidth(180)
+        requestText:SetHeight(28)
+        requestText:SetJustifyH("LEFT")
+        requestText:SetJustifyV("TOP")
+        requestText:SetWordWrap(true)
+        requestText:SetTextColor(0.75, 0.75, 0.75)
+        ticketFrame.requestText = requestText
 
-        -- Optional: original message
-        local originalMessageValue = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        originalMessageValue:SetPoint("TOPLEFT", distanceLabel, "BOTTOMLEFT", 0, -20) -- Add more space below message
-        originalMessageValue:SetWidth(180)
-        originalMessageValue:SetJustifyH("LEFT")
-        originalMessageValue:SetWordWrap(true)
-        ticketFrame.originalMessageValue = originalMessageValue
+        -- FontStrings cannot take mouse input, so overlay a hit box to serve the untruncated
+        -- message on hover.
+        local requestHitBox = CreateFrame("Frame", nil, labelContainer)
+        requestHitBox:SetAllPoints(requestText)
+        requestHitBox:EnableMouse(true)
+        requestHitBox:SetScript("OnEnter", function(self)
+            if not self.message then
+                return
+            end
+
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:SetText("Original request")
+            GameTooltip:AddLine(self.message, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        requestHitBox:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+        ticketFrame.requestHitBox = requestHitBox
 
         -- Portal Button
         local actionButton = CreateFrame("Button", nil, ticketFrame, "SecureActionButtonTemplate")
         actionButton:SetSize(64, 64)
-        actionButton:SetPoint("TOP", labelContainer, "BOTTOM", 0, -20) -- Add more space above portal icon
+        actionButton:SetPoint("TOP", requestText, "BOTTOM", 0, -12) -- Sits below the request text
         -- TBC fix: SecureActionButtons need to register for clicks + Set further attributes
         actionButton:RegisterForClicks("AnyUp", "AnyDown")
         actionButton:SetAttribute("type", "action")
@@ -786,110 +988,6 @@ function UI.showPaginatedTicketWindow()
             end
         end)
         ticketFrame.nextButton = nextButton
-
-        -- Message view state
-        ticketFrame.viewingMessage = false
-        ticketFrame.messageSenderLabel = nil
-        ticketFrame.messageSenderValue = nil
-        ticketFrame.originalMessageLabel = nil
-        ticketFrame.originalMessageValue = nil
-
-        local function toggleMessageView()
-            if not ticketFrame.viewingMessage then
-                Utils.debugPrint("Toggling to message view")
-                ticketFrame.viewingMessage = true
-                iconButton:SetNormalTexture("Interface\\Icons\\achievement_bg_returnxflags_def_wsg")
-
-                -- Hide main info
-                senderLabel:Hide()
-                senderValue:Hide()
-                destinationLabel:Hide()
-                destinationValue:Hide()
-                distanceLabel:Hide()
-
-                -- Hide action button
-                actionButton:Hide()
-                -- Hide remove button
-                removeButton:Hide()
-
-                -- Show sender name in message view
-                ticketFrame.messageSenderLabel = ticketFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                ticketFrame.messageSenderLabel:SetPoint("TOPLEFT", ticketFrame, "TOPLEFT", 30, -70)
-                ticketFrame.messageSenderLabel:SetText("From:")
-                ticketFrame.messageSenderValue = ticketFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                ticketFrame.messageSenderValue:SetPoint("TOPLEFT", ticketFrame.messageSenderLabel, "BOTTOMLEFT", 0, -5)
-                local sender = UI.ticketList[UI.currentTicketIndex]
-                local inviteData = Events.pendingInvites[sender]
-                ticketFrame.messageSenderValue:SetText(sender)
-
-                -- Show message label
-                ticketFrame.originalMessageLabel = ticketFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                ticketFrame.originalMessageLabel:SetPoint("TOPLEFT", ticketFrame.messageSenderValue, "BOTTOMLEFT", 0,
-                    -15)
-                ticketFrame.originalMessageLabel:SetText("Original Message:")
-                ticketFrame.originalMessageValue = ticketFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                ticketFrame.originalMessageValue:SetPoint("TOPLEFT", ticketFrame.originalMessageLabel, "BOTTOMLEFT", 0,
-                    -10)
-                ticketFrame.originalMessageValue:SetWidth(180)
-                ticketFrame.originalMessageValue:SetJustifyH("LEFT")
-                ticketFrame.originalMessageValue:SetWordWrap(true)
-                ticketFrame.originalMessageValue:SetText(inviteData and inviteData.originalMessage or "")
-
-                -- Show Complete TICK
-                if UI.ticketFrame.completeText then
-                    UI.ticketFrame.completeText:Hide()
-                end
-                if UI.ticketFrame.tickIcon then
-                    UI.ticketFrame.tickIcon:Hide()
-                end
-            else
-                Utils.debugPrint("Toggling back to original view")
-                ticketFrame.viewingMessage = false
-                iconButton:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
-
-                -- Show main info
-                senderLabel:Show()
-                senderValue:Show()
-                destinationLabel:Show()
-                destinationValue:Show()
-                distanceLabel:Show()
-
-                -- Show action button
-                actionButton:Show()
-                -- Show remove button
-                removeButton:Show()
-
-                -- Hide message label
-                if ticketFrame.messageSenderLabel then
-                    ticketFrame.messageSenderLabel:Hide()
-                end
-                if ticketFrame.messageSenderValue then
-                    ticketFrame.messageSenderValue:Hide()
-                end
-                if ticketFrame.originalMessageLabel then
-                    ticketFrame.originalMessageLabel:Hide()
-                end
-                if ticketFrame.originalMessageValue then
-                    ticketFrame.originalMessageValue:Hide()
-                end
-
-                if Events.pendingInvites[sender] and Events.pendingInvites[sender].travelled then
-                    -- Show Complete TICK
-                    if UI.ticketFrame.completeText then
-                        UI.ticketFrame.completeText:Show()
-                    end
-                    if UI.ticketFrame.tickIcon then
-                        UI.ticketFrame.tickIcon:Show()
-                    end
-                end
-
-                -- Update ticket frame to ensure correct paid/complete status is shown
-                UI.updateTicketFrame()
-            end
-        end
-
-        iconButton:SetScript("OnClick", toggleMessageView)
-        ticketFrame.toggleMessageView = toggleMessageView
 
         UI.ticketFrame = ticketFrame
         UI.currentTicketIndex = 1 -- Only set to 1 when frame is first created

@@ -62,6 +62,65 @@ function Utils.findKeywordPosition(message, keywordList)
     return nil, nil
 end
 
+-- Function to find every distinct keyword from a list that appears in a message, ordered by
+-- where they appear rather than by their position in the keyword list.
+--
+-- Where two keywords overlap the longer one wins, so "thunder bluff" is reported once rather
+-- than also matching the bare "thunder" sitting inside it. Each keyword is reported at most
+-- once. Used to offer the user a choice when a request names more than one city, e.g.
+-- "wtb port from sw to if" -> {"sw", "if"}.
+function Utils.findAllKeywordPositions(message, keywordList)
+    if not message or not keywordList then
+        return {}
+    end
+
+    -- Pad the message with spaces at the beginning and end.
+    local padded = " " .. message:lower() .. " "
+    local hits = {}
+
+    for _, keyword in ipairs(keywordList) do
+        local pattern = "%f[%w]" .. escapePattern(keyword:lower()) .. "%f[%W]"
+        local searchFrom = 1
+        while true do
+            local startPos, endPos = string.find(padded, pattern, searchFrom)
+            if not startPos then
+                break
+            end
+            table.insert(hits, {
+                position = startPos,
+                finish = endPos,
+                keyword = keyword
+            })
+            searchFrom = startPos + 1
+        end
+    end
+
+    -- Earliest match first; where two start at the same spot, prefer the longer keyword.
+    table.sort(hits, function(a, b)
+        if a.position ~= b.position then
+            return a.position < b.position
+        end
+        return a.finish > b.finish
+    end)
+
+    local results = {}
+    local seen = {}
+    local consumedUpTo = 0
+
+    for _, hit in ipairs(hits) do
+        if hit.position > consumedUpTo and not seen[hit.keyword] then
+            seen[hit.keyword] = true
+            consumedUpTo = hit.finish
+            table.insert(results, {
+                position = hit.position,
+                keyword = hit.keyword
+            })
+        end
+    end
+
+    return results
+end
+
 -- Function to replace placeholders in messages with actual values
 function Utils.replacePlaceholders(message, destination)
     if not message then

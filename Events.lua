@@ -310,6 +310,10 @@ function Events.onEvent(self, event, ...)
             -- from "target" to "trade" or vice versa
             UI.updateTicketFrame()
         end
+
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        -- Secure button updates are blocked during combat, so replay whatever was deferred.
+        UI.flushPendingSecureUpdate()
     end
 end
 

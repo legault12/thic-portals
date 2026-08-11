@@ -40,6 +40,13 @@ end
 
 -- Function to update the destination of a pending invite
 local function updatePendingInviteDestination(playerName, message)
+    -- A destination the user picked by hand on the ticket outranks anything we infer from a
+    -- later message, otherwise a follow-up like "thanks, im in sw" silently retargets the ticket.
+    if Events.pendingInvites[playerName] and Events.pendingInvites[playerName].destinationLocked then
+        Utils.debugPrint("Destination for " .. playerName .. " was set manually - not overwriting.")
+        return
+    end
+
     local destinationPosition, destinationKeyword = Utils.findKeywordPosition(message,
         Config.Settings.DestinationKeywords)
     if destinationPosition and Events.pendingInvites[playerName] then
