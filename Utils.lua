@@ -108,8 +108,9 @@ function Utils.findAllKeywordPositions(message, keywordList)
     local consumedUpTo = 0
 
     for _, hit in ipairs(hits) do
-        if hit.position > consumedUpTo and not seen[hit.keyword] then
-            seen[hit.keyword] = true
+        local normalizedKeyword = hit.keyword:lower()
+        if hit.position > consumedUpTo and not seen[normalizedKeyword] then
+            seen[normalizedKeyword] = true
             consumedUpTo = hit.finish
             table.insert(results, {
                 position = hit.position,
@@ -141,23 +142,23 @@ local ORIGIN_MARKERS = {
     ["i'm"] = true
 }
 
-local function classifyPrecedingWord(word)
-    if not word then
+local function classifyPrecedingText(text)
+    if not text then
         return 0
     end
 
+    -- Arrows are often written without spaces ("sw->if"), so check them before extracting
+    -- a word. A plain greater-than sign is also accepted for messages such as "sw > if".
+    if text:match("%-%>%s*$") or text:match("=%>%s*$") or text:match(">>%s*$") or
+        text:match(">%s*$") then
+        return 1
+    end
+
+    -- Allow punctuation between the marker and location ("to: SW", "(from IF)").
+    local word = text:match("([%w']+)[%p%s]*$")
     if DESTINATION_MARKERS[word] then
         return 1
     elseif ORIGIN_MARKERS[word] then
-        return -1
-    end
-
-    -- Retry without surrounding punctuation, so "to," and "(from" still count.
-    local stripped = word:gsub("^%p+", ""):gsub("%p+$", "")
-
-    if DESTINATION_MARKERS[stripped] then
-        return 1
-    elseif ORIGIN_MARKERS[stripped] then
         return -1
     end
 
@@ -166,41 +167,42 @@ end
 
 -- Function to work out which location in a message the customer actually wants to travel to.
 --
--- Returns the same (position, keyword) pair as findKeywordPosition so it can be swapped in
--- directly, but understands that "wtb port from sw to if" means Ironforge, not Stormwind.
+-- Returns the same (position, keyword) pair as findKeywordPosition, plus an originOnly flag,
+-- and understands that "wtb port from sw to if" means Ironforge, not Stormwind.
 -- The word immediately before each location decides: "to if" is a destination, "from sw" and
 -- "in sw" are where they are standing. With nothing to go on it keeps the old behaviour and
 -- takes the first location mentioned.
 function Utils.findRequestedDestination(message, keywordList)
     if not message or not keywordList then
-        return nil, nil
+        return nil, nil, false
     end
 
     local candidates = Utils.findAllKeywordPositions(message, keywordList)
 
     if #candidates == 0 then
-        return nil, nil
-    elseif #candidates == 1 then
-        return candidates[1].position, candidates[1].keyword
+        return nil, nil, false
     end
 
     local padded = " " .. message:lower() .. " "
-    local best = candidates[1]
-    local bestScore = nil
+    local best = nil
+    local bestScore = -2
 
     for _, candidate in ipairs(candidates) do
-        local precedingWord = padded:sub(1, candidate.position - 1):match("(%S+)%s*$")
-        local score = classifyPrecedingWord(precedingWord)
+        local precedingText = padded:sub(1, candidate.position - 1)
+        local score = classifyPrecedingText(precedingText)
 
         -- Take a better score, and among equally marked destinations take the later one,
         -- because "from A to B" puts the location they actually want last.
-        if bestScore == nil or score > bestScore or (score == bestScore and score > 0) then
+        if score > bestScore or (score == bestScore and score > 0) then
             bestScore = score
             best = candidate
         end
     end
 
-    return best.position, best.keyword
+    -- Callers matching a new request still need the best available city as a fallback: phrases
+    -- such as "portal in Stormwind" commonly mean Stormwind is the requested destination.
+    -- The third return lets follow-up handling avoid retargeting on an origin-only message.
+    return best.position, best.keyword, bestScore < 0
 end
 
 -- Function to replace placeholders in messages with actual values

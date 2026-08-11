@@ -47,8 +47,14 @@ local function updatePendingInviteDestination(playerName, message)
         return
     end
 
-    local destinationPosition, destinationKeyword = Utils.findRequestedDestination(message,
+    local destinationPosition, destinationKeyword, originOnly = Utils.findRequestedDestination(message,
         Config.Settings.DestinationKeywords)
+    if originOnly then
+        Utils.debugPrint("Message from " .. playerName ..
+            " only identifies their current location - not overwriting destination.")
+        return
+    end
+
     if destinationPosition and Events.pendingInvites[playerName] then
         Events.pendingInvites[playerName].destination = destinationKeyword
 

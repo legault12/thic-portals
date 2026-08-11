@@ -325,6 +325,11 @@ end
 
 -- Called on PLAYER_REGEN_ENABLED to apply whatever was deferred during combat.
 function UI.flushPendingSecureUpdate()
+    if UI.pendingTicketWindow then
+        UI.pendingTicketWindow = nil
+        UI.showPaginatedTicketWindow()
+    end
+
     local updateFunction = UI.pendingSecureUpdate
     UI.pendingSecureUpdate = nil
 
@@ -375,6 +380,8 @@ function UI.setIconSpell(inviteData, destination)
     -- Set up secure actions for casting the spell
     inviteData.actionButton:SetAttribute("type", "spell")
     inviteData.actionButton:SetAttribute("spell", inviteData.portal.spellName)
+    inviteData.actionButton:SetScript("OnEnter", nil)
+    inviteData.actionButton:SetScript("OnLeave", nil)
 
     if inviteData.portal.matched then
         Utils.debugPrint("Setting icon spell for " .. destination)
@@ -434,22 +441,44 @@ end
 local REQUEST_TEXT_MAX_CHARS = 60
 local DESTINATION_CHIP_SPACING = 4
 
+local function utf8Prefix(text, maxBytes)
+    local position = 1
+    local lastComplete = 0
+
+    while position <= #text and position <= maxBytes do
+        local firstByte = text:byte(position)
+        local characterBytes = 1
+
+        if firstByte >= 240 then
+            characterBytes = 4
+        elseif firstByte >= 224 then
+            characterBytes = 3
+        elseif firstByte >= 194 then
+            characterBytes = 2
+        end
+
+        if position + characterBytes - 1 > maxBytes then
+            break
+        end
+
+        lastComplete = position + characterBytes - 1
+        position = position + characterBytes
+    end
+
+    return text:sub(1, lastComplete)
+end
+
 local function truncateForDisplay(text, maxChars)
     if #text <= maxChars then
         return text
     end
 
-    local cut = text:sub(1, maxChars)
+    local cut = utf8Prefix(text, maxChars)
 
     -- Prefer breaking on a word boundary, but only if it does not throw away most of the text.
     local lastSpace = cut:find("%s[^%s]*$")
     if lastSpace and lastSpace > maxChars * 0.6 then
         cut = cut:sub(1, lastSpace - 1)
-    else
-        -- Otherwise make sure we did not slice through a multi-byte UTF-8 character.
-        while #cut > 0 and cut:byte(#cut) >= 128 and cut:byte(#cut) <= 191 do
-            cut = cut:sub(1, #cut - 1)
-        end
     end
 
     return cut .. "..."
@@ -490,6 +519,7 @@ local function acquireDestinationChip(ticketFrame, index)
 
         local label = chip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         label:SetPoint("CENTER")
+        label:SetWordWrap(false)
         chip.label = label
 
         local highlight = chip:CreateTexture(nil, "HIGHLIGHT")
@@ -532,8 +562,10 @@ function UI.updateDestinationChoices(sender, inviteData)
 
     ticketFrame.destinationValue:Hide()
 
-    local anchor = ticketFrame.destinationLabel
-    local offsetX = 5
+    -- Reserve one full-width row beneath the label. Dividing it evenly prevents two long
+    -- destination names from running outside the narrow ticket frame.
+    local availableWidth = 180
+    local chipWidth = (availableWidth - DESTINATION_CHIP_SPACING * (#candidates - 1)) / #candidates
 
     for index, candidate in ipairs(candidates) do
         local chip = acquireDestinationChip(ticketFrame, index)
@@ -547,12 +579,16 @@ function UI.updateDestinationChoices(sender, inviteData)
             chip.label:SetTextColor(0.5, 0.5, 0.5) -- grey: an alternative the request also named
         end
 
-        chip:SetWidth(chip.label:GetStringWidth() + 8)
+        chip:SetWidth(chipWidth)
+        chip.label:SetWidth(math.max(1, chipWidth - 4))
         chip:ClearAllPoints()
-        chip:SetPoint("LEFT", anchor, "RIGHT", offsetX, 0)
+        chip:SetPoint("TOPLEFT", ticketFrame.destinationLabel, "BOTTOMLEFT",
+            (index - 1) * (chipWidth + DESTINATION_CHIP_SPACING), -4)
 
         chip:SetScript("OnClick", function()
             if inviteData.destination == keyword then
+                inviteData.destinationLocked = true
+                Utils.print("Destination for " .. sender .. " confirmed as " .. keyword .. ".")
                 return
             end
 
@@ -579,8 +615,6 @@ function UI.updateDestinationChoices(sender, inviteData)
 
         chip:Show()
 
-        anchor = chip
-        offsetX = DESTINATION_CHIP_SPACING
     end
 
     hideDestinationChipsFrom(ticketFrame, #candidates + 1)
@@ -664,20 +698,35 @@ function UI.updateTicketFrame()
     -- Save the matching portal details to the invite tracker
     inviteData.portal = Utils.getMatchingPortal(destination) -- Set the portal button icon based on the invite data
 
-    -- Only hide the portal/trade icon if the user has travelled (not just paid).
-    -- This writes secure attributes, so it has to wait if we are in combat.
+    -- All action-button mutations stay together: SetAttribute and SetEnabled are protected,
+    -- and updating only part of the button in combat can leave its icon and action disagreeing.
     local applied = UI.runWhenOutOfCombat(function()
-        if Config.CurrentAlivePortals and Config.CurrentAlivePortals[inviteData.portal.spellName] then
+        -- The ticket may have been removed or changed while this update was deferred.
+        if not UI.ticketFrame or UI.ticketFrame.currentSender ~= sender or
+            Events.pendingInvites[sender] ~= inviteData then
+            return
+        end
+
+        local actionButton = UI.ticketFrame.actionButton
+
+        if inviteData.travelled then
+            if actionButton.icon then
+                actionButton.icon:Hide()
+            end
+            actionButton:SetEnabled(false)
+        elseif Config.CurrentAlivePortals and Config.CurrentAlivePortals[inviteData.portal.spellName] then
             UI.setTradeIcon({
-                actionButton = UI.ticketFrame.actionButton,
+                actionButton = actionButton,
                 name = inviteData.name,
                 targetted = inviteData.targetted
             })
+            actionButton.icon:Show()
         else
             UI.setIconSpell({
-                actionButton = UI.ticketFrame.actionButton,
+                actionButton = actionButton,
                 portal = inviteData.portal
             }, destination)
+            actionButton.icon:Show()
         end
     end)
 
@@ -718,7 +767,6 @@ function UI.updateTicketFrame()
         if UI.ticketFrame.actionButton.icon then
             UI.ticketFrame.actionButton.icon:Hide()
         end
-        UI.ticketFrame.actionButton:SetEnabled(false)
     end
 
     -- Show/hide Paid/Complete TICK based on status
@@ -741,6 +789,12 @@ function UI.updateTicketFrame()
         showRemoveAndClearActionButton()
     elseif inviteData.hasPaid then
         -- Show Paid TICK if trade is complete but not travelled yet
+        if UI.ticketFrame.completeText then
+            UI.ticketFrame.completeText:Hide()
+        end
+        if UI.ticketFrame.tickIcon then
+            UI.ticketFrame.tickIcon:Hide()
+        end
         if UI.ticketFrame.paidText then
             UI.ticketFrame.paidText:Show()
         end
@@ -762,11 +816,6 @@ function UI.updateTicketFrame()
             UI.ticketFrame.paidCoinIcon:Hide()
         end
 
-        -- Show portal icon and enable portal button
-        if UI.ticketFrame.actionButton.icon then
-            UI.ticketFrame.actionButton.icon:Show()
-        end
-        UI.ticketFrame.actionButton:SetEnabled(true)
     end
 
     -- Ticker for dynamic updates (when a user trades gold or travels), only run this if we are not travelled
@@ -795,9 +844,15 @@ function UI.updateTicketFrame()
 
                 showRemoveAndClearActionButton()
 
-                -- Cancel the tracker since the transaction is done
+                -- Cancel this tracker before refreshing; the refresh may create a replacement.
                 if currentTicker then
                     currentTicker:Cancel()
+                    currentTicker = nil
+                end
+
+                -- Disable the secure action as soon as combat permits it.
+                if UI.ticketFrame.currentSender == sender then
+                    UI.updateTicketFrame()
                 end
             elseif Events.pendingInvites[sender] and Events.pendingInvites[sender].hasPaid then
                 -- Show Paid TICK if trade is complete but not travelled yet
@@ -819,10 +874,17 @@ function UI.showPaginatedTicketWindow()
     if #UI.ticketList == 0 then
         return
     end
+    -- Creating a SecureActionButtonTemplate is itself forbidden during combat. If the first
+    -- ticket arrives mid-fight, keep tracking it and build the window on leaving combat.
+    if not UI.ticketFrame and InCombatLockdown() then
+        UI.pendingTicketWindow = true
+        Utils.debugPrint("In combat - deferring initial ticket window creation.")
+        return
+    end
     if not UI.ticketFrame then
         -- Create the main frame (only once)
         local ticketFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        ticketFrame:SetSize(220, 320)
+        ticketFrame:SetSize(220, 340)
         ticketFrame:SetPoint("CENTER", UIParent, "CENTER", UIParent:GetWidth() * 0.3, 0)
         ticketFrame:SetBackdrop({
             bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -878,7 +940,8 @@ function UI.showPaginatedTicketWindow()
         ticketFrame.destinationValue = destinationValue
 
         local distanceLabel = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        distanceLabel:SetPoint("TOPLEFT", destinationLabel, "BOTTOMLEFT", 0, -10)
+        -- Leave a row for destination choices. Single-destination tickets simply keep it empty.
+        distanceLabel:SetPoint("TOPLEFT", destinationLabel, "BOTTOMLEFT", 0, -28)
         distanceLabel:SetText("Distance: N/A")
         ticketFrame.distanceLabel = distanceLabel
 
