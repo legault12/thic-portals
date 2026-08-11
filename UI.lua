@@ -440,6 +440,9 @@ end
 -- text stays available on hover, so the ticket never grows unpredictably tall.
 local REQUEST_TEXT_MAX_CHARS = 60
 local DESTINATION_CHIP_SPACING = 4
+local DESTINATION_CHIP_PADDING = 6 -- breathing room either side of a chip's text
+local DESTINATION_CHIP_MAX = 4 -- past four locations a message is an advert, not a request
+local DESTINATION_ROW_WIDTH = 180 -- the chip row cannot wrap: distanceLabel sits a fixed 28px below
 
 local function utf8Prefix(text, maxBytes)
     local position = 1
@@ -543,6 +546,145 @@ local function hideDestinationChipsFrom(ticketFrame, fromIndex)
     end
 end
 
+-- A hidden FontString in the chip font, so candidate widths can be measured without disturbing a
+-- chip that is currently on screen.
+local function measureChipWidth(ticketFrame, text)
+    if not ticketFrame.chipMeasure then
+        local measure = ticketFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        measure:Hide()
+        ticketFrame.chipMeasure = measure
+    end
+
+    ticketFrame.chipMeasure:SetWidth(0)
+    ticketFrame.chipMeasure:SetText(text)
+
+    return ticketFrame.chipMeasure:GetStringWidth() + DESTINATION_CHIP_PADDING
+end
+
+-- Greedy left-to-right pack. A candidate that does not fit is skipped rather than ending the pack,
+-- because a later, shorter keyword may still have room. Index 1 is always placed: callers put the
+-- selected destination there so the current pick can never be the one squeezed out.
+local function packDestinationChips(ticketFrame, ordered, reserve)
+    local picked, omitted, used = {}, {}, 0
+
+    for index, candidate in ipairs(ordered) do
+        local width = measureChipWidth(ticketFrame, candidate.keyword)
+
+        -- Index 1 is placed whether or not it fits, so an oversized custom keyword would otherwise
+        -- push the overflow chip past the edge of the frame. Clamp it to what the row can give.
+        if index == 1 then
+            width = math.max(1, math.min(width, DESTINATION_ROW_WIDTH - reserve))
+        end
+
+        local spacing = (#picked > 0) and DESTINATION_CHIP_SPACING or 0
+        local fits = (used + spacing + width + reserve) <= DESTINATION_ROW_WIDTH
+
+        if index == 1 or (#picked < DESTINATION_CHIP_MAX and fits) then
+            picked[#picked + 1] = {
+                keyword = candidate.keyword,
+                width = width,
+                offset = used + spacing
+            }
+            used = used + spacing + width
+        else
+            omitted[#omitted + 1] = candidate.keyword
+        end
+    end
+
+    return picked, omitted, used
+end
+
+local function hideOverflowMenu(ticketFrame)
+    if ticketFrame.overflowMenu then
+        ticketFrame.overflowMenu:Hide()
+    end
+end
+
+-- The destinations with no room in the row are still choices, so the "+N" chip opens them as a
+-- list rather than just reporting them. Picking one makes it the selected destination, and the
+-- selected destination is always packed first, so it takes a place in the row immediately.
+local function showOverflowMenu(ticketFrame, anchorChip, keywords, onSelect)
+    local menu = ticketFrame.overflowMenu
+
+    if not menu then
+        menu = CreateFrame("Frame", nil, ticketFrame, "BackdropTemplate")
+        menu:SetFrameStrata("DIALOG")
+        menu:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 12,
+            insets = {
+                left = 3,
+                right = 3,
+                top = 3,
+                bottom = 3
+            }
+        })
+        -- Fully opaque, and above every layer of the ticket: the request text sits directly
+        -- underneath and showed through at 0.95.
+        menu:SetBackdropColor(0, 0, 0, 1)
+        menu:SetFrameLevel(ticketFrame:GetFrameLevel() + 10)
+        menu:EnableMouse(true)
+        menu:Hide()
+        menu.rows = {}
+        ticketFrame.overflowMenu = menu
+    end
+
+    local rowHeight = 14
+    local widest = 0
+
+    for index, keyword in ipairs(keywords) do
+        local row = menu.rows[index]
+
+        if not row then
+            row = CreateFrame("Button", nil, menu)
+            row:SetHeight(rowHeight)
+
+            local label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            label:SetPoint("LEFT", 6, 0)
+            label:SetJustifyH("LEFT")
+            row.label = label
+
+            local highlight = row:CreateTexture(nil, "HIGHLIGHT")
+            highlight:SetAllPoints()
+            highlight:SetTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+            highlight:SetBlendMode("ADD")
+
+            menu.rows[index] = row
+        end
+
+        row.label:SetWidth(0)
+        row.label:SetText(keyword)
+        row.label:SetTextColor(0.5, 0.5, 0.5)
+
+        row:SetScript("OnClick", function()
+            menu:Hide()
+            onSelect(keyword)
+        end)
+
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", menu, "TOPLEFT", 4, -(4 + (index - 1) * rowHeight))
+        row:Show()
+
+        widest = math.max(widest, row.label:GetStringWidth() + 12)
+    end
+
+    for index = #keywords + 1, #menu.rows do
+        menu.rows[index]:Hide()
+    end
+
+    for index = 1, #keywords do
+        menu.rows[index]:SetWidth(widest)
+    end
+
+    menu:SetSize(widest + 8, #keywords * rowHeight + 8)
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPLEFT", anchorChip, "BOTTOMLEFT", 0, -2)
+    menu:Show()
+end
+
 function UI.updateDestinationChoices(sender, inviteData)
     local ticketFrame = UI.ticketFrame
 
@@ -550,6 +692,11 @@ function UI.updateDestinationChoices(sender, inviteData)
         return
     end
 
+    -- Any open overflow list belongs to the layout we are about to replace.
+    hideOverflowMenu(ticketFrame)
+
+    -- Aliases for one city ("sw" and "stormwind") collapse to a single chip, but only when both
+    -- resolve through the explicit map - see Utils.dedupeDestinationCandidates.
     local candidates = Utils.findAllKeywordPositions(inviteData.originalMessage,
         Config.Settings.DestinationKeywords)
 
@@ -560,17 +707,57 @@ function UI.updateDestinationChoices(sender, inviteData)
         return
     end
 
+    -- Selected destination first so it is never the one dropped; the rest follow in the order the
+    -- customer named them.
+    local ordered = {}
+
+    for _, candidate in ipairs(candidates) do
+        if inviteData.destination == candidate.keyword then
+            ordered[#ordered + 1] = candidate
+        end
+    end
+
+    for _, candidate in ipairs(candidates) do
+        if inviteData.destination ~= candidate.keyword then
+            ordered[#ordered + 1] = candidate
+        end
+    end
+
+    -- Reserving room for the overflow chip can push a further candidate out, which changes the
+    -- number the chip has to report. Re-pack until the count settles; adding reserve only ever
+    -- removes chips, so this converges.
+    local picked, omitted, usedWidth = packDestinationChips(ticketFrame, ordered, 0)
+
+    -- Bounded fixed point: each pass can only omit more, so it settles in at most #ordered steps.
+    for _ = 1, #ordered do
+        if #omitted == 0 then
+            break
+        end
+
+        local previous = #omitted
+        local reserve = DESTINATION_CHIP_SPACING + measureChipWidth(ticketFrame, "+" .. previous)
+
+        picked, omitted, usedWidth = packDestinationChips(ticketFrame, ordered, reserve)
+
+        if #omitted == previous then
+            break
+        end
+    end
+
+    -- A lone chip with nothing beside it is not a choice - fall back to the plain label.
+    if #picked < 2 and #omitted == 0 then
+        ticketFrame.destinationValue:Show()
+        hideDestinationChipsFrom(ticketFrame, 1)
+        return
+    end
+
     ticketFrame.destinationValue:Hide()
 
-    -- Reserve one full-width row beneath the label. Dividing it evenly prevents two long
-    -- destination names from running outside the narrow ticket frame.
-    local availableWidth = 180
-    local chipWidth = (availableWidth - DESTINATION_CHIP_SPACING * (#candidates - 1)) / #candidates
-
-    for index, candidate in ipairs(candidates) do
+    for index, entry in ipairs(picked) do
         local chip = acquireDestinationChip(ticketFrame, index)
-        local keyword = candidate.keyword
+        local keyword = entry.keyword
 
+        chip.label:SetWidth(0)
         chip.label:SetText(keyword)
 
         if inviteData.destination == keyword then
@@ -579,11 +766,10 @@ function UI.updateDestinationChoices(sender, inviteData)
             chip.label:SetTextColor(0.5, 0.5, 0.5) -- grey: an alternative the request also named
         end
 
-        chip:SetWidth(chipWidth)
-        chip.label:SetWidth(math.max(1, chipWidth - 4))
+        chip:SetWidth(entry.width)
+        chip.label:SetWidth(entry.width)
         chip:ClearAllPoints()
-        chip:SetPoint("TOPLEFT", ticketFrame.destinationLabel, "BOTTOMLEFT",
-            (index - 1) * (chipWidth + DESTINATION_CHIP_SPACING), -4)
+        chip:SetPoint("TOPLEFT", ticketFrame.destinationLabel, "BOTTOMLEFT", entry.offset, -4)
 
         chip:SetScript("OnClick", function()
             if inviteData.destination == keyword then
@@ -614,10 +800,67 @@ function UI.updateDestinationChoices(sender, inviteData)
         end)
 
         chip:Show()
-
     end
 
-    hideDestinationChipsFrom(ticketFrame, #candidates + 1)
+    local nextChipIndex = #picked + 1
+
+    -- Never cap silently. debugPrint is off for normal users and the request text is truncated, so
+    -- the row itself has to say that choices were left off, and name them on hover.
+    if #omitted > 0 then
+        local chip = acquireDestinationChip(ticketFrame, nextChipIndex)
+        local label = "+" .. #omitted
+        local width = measureChipWidth(ticketFrame, label)
+        local omittedList = table.concat(omitted, ", ")
+
+        chip.label:SetWidth(0)
+        chip.label:SetText(label)
+        chip.label:SetTextColor(0.5, 0.5, 0.5)
+        chip:SetWidth(width)
+        chip.label:SetWidth(width)
+        chip:ClearAllPoints()
+        chip:SetPoint("TOPLEFT", ticketFrame.destinationLabel, "BOTTOMLEFT",
+            usedWidth + DESTINATION_CHIP_SPACING, -4)
+
+        -- These are still real choices, so the chip opens them as a list. Picking one makes it the
+        -- selected destination, and the selected destination is packed first, so it takes a place
+        -- in the row straight away.
+        chip:SetScript("OnClick", function(self)
+            if ticketFrame.overflowMenu and ticketFrame.overflowMenu:IsShown() then
+                hideOverflowMenu(ticketFrame)
+                return
+            end
+
+            showOverflowMenu(ticketFrame, self, omitted, function(keyword)
+                inviteData.destination = keyword
+                -- Stop a later whisper from silently overwriting a deliberate choice.
+                inviteData.destinationLocked = true
+
+                Utils.print("Destination for " .. sender .. " set to " .. keyword .. ".")
+
+                UI.updateTicketFrame()
+            end)
+        end)
+
+        chip:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(#omitted .. " more named - click to choose")
+            GameTooltip:AddLine(omittedList, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+
+        chip:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        chip:Show()
+
+        nextChipIndex = nextChipIndex + 1
+
+        Utils.debugPrint("Showing " .. #picked .. " of " .. #candidates ..
+                             " destinations named in this request; omitted: " .. omittedList)
+    end
+
+    hideDestinationChipsFrom(ticketFrame, nextChipIndex)
 end
 
 -- Helper to update ticketList from pendingInvites
@@ -644,6 +887,8 @@ end
 function UI.updateTicketFrame()
     -- This code will hide the ticket frame if there are no tickets
     if #UI.ticketList == 0 then
+        Utils.cancelDistanceTicker()
+
         if UI.ticketFrame then
             UI.ticketFrame:Hide()
         end
@@ -906,6 +1151,12 @@ function UI.showPaginatedTicketWindow()
         ticketFrame:SetScript("OnDragStart", ticketFrame.StartMoving)
         ticketFrame:SetScript("OnDragStop", ticketFrame.StopMovingOrSizing)
 
+        -- Catches every route to a hidden window - close button, Remove, roster update, /reload -
+        -- so the distance ticker can never outlive the frame it writes to.
+        ticketFrame:SetScript("OnHide", function()
+            Utils.cancelDistanceTicker()
+        end)
+
         -- Close button
         local closeButton = CreateFrame("Button", nil, ticketFrame, "UIPanelCloseButton")
         closeButton:SetPoint("TOPRIGHT", -5, -5)
@@ -981,7 +1232,13 @@ function UI.showPaginatedTicketWindow()
         -- Portal Button
         local actionButton = CreateFrame("Button", nil, ticketFrame, "SecureActionButtonTemplate")
         actionButton:SetSize(64, 64)
-        actionButton:SetPoint("TOP", requestText, "BOTTOM", 0, -12) -- Sits below the request text
+        -- A SecureActionButtonTemplate is protected, and its entire anchor family must be frames -
+        -- anchoring it to requestText, or to anything itself anchored to a FontString, raises
+        -- "Cannot anchor protected frames to regions". The text block above is a chain of
+        -- FontStrings, so there is no legal route through it. Pin the button to the ticket frame
+        -- instead: every offset above it is fixed and requestText has a fixed height, so this lands
+        -- in the same place while keeping the chain Button -> ticketFrame -> UIParent.
+        actionButton:SetPoint("BOTTOM", ticketFrame, "BOTTOM", 0, 84)
         -- TBC fix: SecureActionButtons need to register for clicks + Set further attributes
         actionButton:RegisterForClicks("AnyUp", "AnyDown")
         actionButton:SetAttribute("type", "action")

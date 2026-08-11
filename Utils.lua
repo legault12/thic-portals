@@ -220,12 +220,40 @@ function Utils.replacePlaceholders(message, destination)
 end
 
 -- Function to update the distance label in the UI based on the distance between two players
+-- Only one distance ticker may be live at a time. updateTicketFrame runs on every target change,
+-- roster update and destination chip click, and the in-ticker guard below only fires when the
+-- displayed sender *changes* - so refreshing the same ticket stacked tickers that never stopped,
+-- all writing to the same label. Cancel the outgoing one before starting its replacement.
+local distanceTicker
+
+-- Stop the live distance ticker. Called when the ticket window is hidden or empties out: without
+-- this the ticker keeps polling UnitPosition every second for a customer who is still grouped but
+-- no longer on screen, because the in-ticker guards only fire on a sender change or a party leave.
+function Utils.cancelDistanceTicker()
+    if distanceTicker then
+        distanceTicker:Cancel()
+        distanceTicker = nil
+    end
+end
+
+-- Cancel from inside the ticker itself. Only clears the stored reference when it still points at
+-- this ticker; a newer one may already have replaced it.
+local function stopDistanceTicker(ticker)
+    ticker:Cancel()
+
+    if distanceTicker == ticker then
+        distanceTicker = nil
+    end
+end
+
 function Utils.updateDistanceLabel(sender, distanceLabel)
+    Utils.cancelDistanceTicker()
+
     local ticker
     ticker = C_Timer.NewTicker(1, function()
         -- Only update if the label is still for the correct sender
         if UI.ticketFrame and UI.ticketFrame.currentSender ~= sender then
-            ticker:Cancel()
+            stopDistanceTicker(ticker)
             return
         end
         if UnitInParty(sender) then
@@ -240,9 +268,11 @@ function Utils.updateDistanceLabel(sender, distanceLabel)
             end
         else
             distanceLabel:SetText("Distance: N/A")
-            ticker:Cancel() -- Cancel the ticker if the player is no longer in the party
+            stopDistanceTicker(ticker) -- Cancel the ticker if the player is no longer in the party
         end
     end)
+
+    distanceTicker = ticker
 end
 
 -- Function to calculate the required height for text
@@ -410,7 +440,6 @@ function Utils.getMatchingPortal(destination)
 
     return portal
 end
-
 -- Convert the copper value to a gold, silver, and copper formatted string
 function Utils.formatCopperValue(totalCost)
     local gold = math.floor(totalCost / 10000)
