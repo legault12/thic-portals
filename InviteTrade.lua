@@ -355,6 +355,112 @@ function InviteTrade.announceTravelStart(spellName)
     return true
 end
 
+-- Portal casts are attributed to the ticket whose button started them.
+--
+-- The button arms an intent on click and the cast is credited when it succeeds. A portal cast any
+-- other way - from the spellbook, or a click the addon never saw - falls back to the customer who
+-- has been waiting longest for that destination, which is the one a seller working the queue in
+-- order would have meant.
+InviteTrade.pendingPortalCast = nil
+
+-- Generous next to the travel window: a portal takes seconds to cast, and the credit lands on
+-- success rather than on start.
+local PORTAL_INTENT_WINDOW = 30
+
+local portalIntentToken = 0
+
+function InviteTrade.beginPortalCast(sender, inviteData, spellName)
+    portalIntentToken = portalIntentToken + 1
+
+    InviteTrade.pendingPortalCast = {
+        token = portalIntentToken,
+        armedAt = GetTime(),
+        sender = sender,
+        inviteData = inviteData,
+        spellName = spellName
+    }
+
+    local token = portalIntentToken
+
+    C_Timer.After(PORTAL_INTENT_WINDOW, function()
+        InviteTrade.clearPortalCast(nil, nil, token)
+    end)
+
+    return portalIntentToken
+end
+
+function InviteTrade.clearPortalCast(sender, spellName, token)
+    local pending = InviteTrade.pendingPortalCast
+
+    if not pending then
+        return false
+    end
+
+    if sender and pending.sender ~= sender then
+        return false
+    end
+
+    if spellName and pending.spellName ~= spellName then
+        return false
+    end
+
+    if token and pending.token ~= token then
+        return false
+    end
+
+    InviteTrade.pendingPortalCast = nil
+
+    return true
+end
+
+-- The oldest waiting customer this portal would serve, ignoring anyone already served by a live
+-- portal of their own.
+local function oldestTicketAwaiting(spellName)
+    for _, sender in ipairs(Utils.orderTicketsByArrival(Events.pendingInvites, true)) do
+        local inviteData = Events.pendingInvites[sender]
+
+        if inviteData and not inviteData.travelled and not Utils.isTicketPortalAlive(inviteData) and
+            inviteData.destination then
+            local portal = Utils.getMatchingPortal(inviteData.destination)
+
+            if portal.matched and portal.spellName == spellName then
+                return sender, inviteData
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+-- Credit a completed portal to a ticket. Returns the customer served, or nil when the cast matched
+-- nobody waiting.
+function InviteTrade.attributePortalCast(spellName)
+    if not spellName then
+        return nil
+    end
+
+    local pending = InviteTrade.pendingPortalCast
+    local sender, inviteData
+
+    if pending and pending.spellName == spellName and (GetTime() - pending.armedAt) <= PORTAL_INTENT_WINDOW and
+        Events.pendingInvites[pending.sender] == pending.inviteData then
+        sender, inviteData = pending.sender, pending.inviteData
+    else
+        -- No usable intent: the mage cast it themselves, or the ticket went away mid-cast.
+        sender, inviteData = oldestTicketAwaiting(spellName)
+    end
+
+    InviteTrade.pendingPortalCast = nil
+
+    if not inviteData then
+        return nil
+    end
+
+    inviteData.portalCastAt = GetTime()
+
+    return sender
+end
+
 -- Explain what the matcher makes of a message, for /Tp parse.
 --
 -- Calls the same matching helpers the live path uses rather than reimplementing them, so the

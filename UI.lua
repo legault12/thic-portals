@@ -1103,14 +1103,6 @@ function UI.updateTicketFrame()
         UI.ticketFrame.nextButton:SetEnabled(nextEnabled and moreThanOneTicket)
     end
 
-    -- Print the current alive portals
-    if Config.Settings.debugMode then
-        Utils.debugPrint("Current alive portals:")
-        for spellName, cast in pairs(Config.CurrentAlivePortals or {}) do
-            Utils.debugPrint("LIVE PORTAL: " .. spellName .. ": " .. tostring(cast))
-        end
-    end
-
     -- Save the matching portal details to the invite tracker
     inviteData.portal = Utils.getMatchingPortal(destination) -- Set the portal button icon based on the invite data
 
@@ -1130,7 +1122,11 @@ function UI.updateTicketFrame()
                 actionButton.icon:Hide()
             end
             actionButton:SetEnabled(false)
-        elseif Config.CurrentAlivePortals and Config.CurrentAlivePortals[inviteData.portal.spellName] then
+            actionButton:SetScript("PreClick", nil)
+        elseif Utils.isTicketPortalAlive(inviteData) then
+            -- This ticket's own portal is standing, so the button becomes target/trade. No cast to
+            -- arm here.
+            actionButton:SetScript("PreClick", nil)
             UI.setTradeIcon({
                 actionButton = actionButton,
                 name = inviteData.name,
@@ -1143,6 +1139,14 @@ function UI.updateTicketFrame()
                 portal = inviteData.portal
             }, destination)
             actionButton.icon:Show()
+
+            -- Arm the cast against this ticket. PreClick, not PostClick, for the same reason as the
+            -- travel button: the secure action fires on click and the cast events follow it.
+            actionButton:SetScript("PreClick", function()
+                if Events.pendingInvites[sender] == inviteData then
+                    InviteTrade.beginPortalCast(sender, inviteData, inviteData.portal.spellName)
+                end
+            end)
         end
     end)
 

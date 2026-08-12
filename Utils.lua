@@ -636,6 +636,22 @@ function Utils.indexOfTicket(ticketList, sender)
     return nil
 end
 
+-- How long a cast portal stays usable. Derived, not stored: the ticket records when the portal was
+-- cast and whether it is still standing is computed from that.
+Utils.PORTAL_ALIVE_WINDOW = 60
+
+-- Whether the portal cast for this particular ticket is still up.
+--
+-- Portal liveness used to be global, keyed by spell name, so casting Stormwind for one customer
+-- flipped every Stormwind ticket in the queue to the trade icon at once.
+function Utils.isTicketPortalAlive(inviteData)
+    if not inviteData or not inviteData.portalCastAt then
+        return false
+    end
+
+    return (GetTime() - inviteData.portalCastAt) <= Utils.PORTAL_ALIVE_WINDOW
+end
+
 -- Which ticket to show once the queue has been rebuilt.
 --
 -- Follow the customer being handled if they are still queued. If they have gone, hold their slot

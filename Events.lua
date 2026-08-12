@@ -257,28 +257,23 @@ function Events.onEvent(self, event, ...)
             -- the start of the cast, not here.
             InviteTrade.clearTravelAnnouncement(nil, spellName)
 
-            for _, portalName in ipairs(Config.Portals) do
-                if spellName:lower() == portalName:lower() then
-                    Utils.debugPrint("Portal to " .. spellName .. " successfully cast!")
+            if spellName and spellName:match("^Portal: ") then
+                -- Credited to one ticket rather than to the spell, so casting for one customer no
+                -- longer flips every ticket wanting that city.
+                local servedSender = InviteTrade.attributePortalCast(spellName)
 
-                    Config.CurrentAlivePortals[spellName] = true
+                if servedSender then
+                    Utils.debugPrint(spellName .. " cast for " .. servedSender .. ".")
 
-                    for spellName, cast in pairs(Config.CurrentAlivePortals or {}) do
-                        print(" - " .. spellName .. ": " .. tostring(cast))
-                    end
-
-                    -- Redraw the ticket window
                     UI.updateTicketFrame()
 
-                    -- Add a timer for a minute's time to remove the portal from the list
-                    C_Timer.After(60, function()
-                        Config.CurrentAlivePortals[spellName] = nil
-
-                        Utils.debugPrint("Portal to " .. spellName ..
-                                    " has been removed from the list of active portals.")
+                    -- One refresh when it lapses, so the ticket stops offering a trade for a portal
+                    -- that is no longer standing.
+                    C_Timer.After(Utils.PORTAL_ALIVE_WINDOW, function()
+                        UI.updateTicketFrame()
                     end)
-
-                    break
+                else
+                    Utils.debugPrint(spellName .. " cast, but no waiting ticket matched it.")
                 end
             end
         end
@@ -296,7 +291,10 @@ function Events.onEvent(self, event, ...)
         if unit == "player" then
             -- Only when it is the teleport we armed. Any other spell failing during the cast is
             -- unrelated and must not cancel the announcement.
-            InviteTrade.clearTravelAnnouncement(nil, GetSpellInfo(spellID))
+            local failedSpell = GetSpellInfo(spellID)
+
+            InviteTrade.clearTravelAnnouncement(nil, failedSpell)
+            InviteTrade.clearPortalCast(nil, failedSpell)
         end
 
     elseif event == "UI_INFO_MESSAGE" then

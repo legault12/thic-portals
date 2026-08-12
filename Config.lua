@@ -179,8 +179,6 @@ Config.Portals = { -- Alliance Portals
 "Portal: Stonard", -- Neutral TBC Portal
 "Portal: Shattrath" -- TBC
 }
--- List of currently alive portals
-Config.CurrentAlivePortals = {}
 
 -- Check if AceGUI is available
 local AceGUI = LibStub("AceGUI-3.0")
