@@ -314,30 +314,44 @@ end
 -- SetAttribute and SetEnabled on a SecureActionButtonTemplate are protected while in combat.
 -- Run the update now if we can, otherwise stash it and replay it on PLAYER_REGEN_ENABLED.
 -- Only the most recent update is kept, since each one rebuilds the button from scratch.
-function UI.runWhenOutOfCombat(updateFunction)
+UI.pendingSecureUpdates = {}
+
+-- Defer a protected-frame mutation past combat, keyed by what it touches.
+--
+-- Keyed rather than a single slot: one ticket refresh updates both the portal button and the
+-- travel button, and a single slot meant the second call silently discarded the first - leaving a
+-- button shown with a stale spell assigned to it.
+function UI.runWhenOutOfCombat(key, updateFunction)
     if InCombatLockdown() then
-        UI.pendingSecureUpdate = updateFunction
+        UI.pendingSecureUpdates[key] = updateFunction
         return false
     end
 
-    UI.pendingSecureUpdate = nil
+    UI.pendingSecureUpdates[key] = nil
     updateFunction()
     return true
 end
 
 -- Called on PLAYER_REGEN_ENABLED to apply whatever was deferred during combat.
 function UI.flushPendingSecureUpdate()
+    -- Replay what combat deferred BEFORE building any window that combat also deferred.
+    --
+    -- The other order lets a callback captured from the old ticket land on a window created a
+    -- moment ago and undo it: an unconditional hideTravelButton carries no sender, so the
+    -- staleness check cannot catch it, and it would clear a brand new ticket's valid travel
+    -- action. Replayed first, these either no-op or act on the outgoing frame, and the window
+    -- refresh below is then the authoritative final state.
+    local pending = UI.pendingSecureUpdates
+    UI.pendingSecureUpdates = {}
+
+    for key, updateFunction in pairs(pending) do
+        Utils.debugPrint("Leaving combat - applying deferred secure update: " .. key)
+        updateFunction()
+    end
+
     if UI.pendingTicketWindow then
         UI.pendingTicketWindow = nil
         UI.showPaginatedTicketWindow()
-    end
-
-    local updateFunction = UI.pendingSecureUpdate
-    UI.pendingSecureUpdate = nil
-
-    if updateFunction then
-        Utils.debugPrint("Leaving combat - applying deferred ticket button update.")
-        updateFunction()
     end
 end
 
@@ -687,6 +701,101 @@ local function showOverflowMenu(ticketFrame, anchorChip, keywords, onSelect)
     menu:Show()
 end
 
+-- Apply the travel button's protected state.
+--
+-- SetAttribute, Show and Hide are all protected, so they belong in ONE deferred update: splitting
+-- them risked a button that is visible with no action, or worse, visible with a stale teleport.
+-- By the time a deferred update runs the ticket may have paged to another customer, so it
+-- re-checks the sender before touching anything. Passing no spell clears the action as well as
+-- hiding, so nothing stale survives to be cast if the button is shown again.
+local function applyTravelState(sender, teleportSpell, zoneName)
+    UI.runWhenOutOfCombat("travelButton", function()
+        local ticketFrame = UI.ticketFrame
+
+        if not ticketFrame or not ticketFrame.travelButton then
+            return
+        end
+
+        -- Stale: the displayed ticket changed while this waited for combat to end.
+        if sender and ticketFrame.currentSender ~= sender then
+            return
+        end
+
+        local travelButton = ticketFrame.travelButton
+
+        if not teleportSpell then
+            travelButton:SetAttribute("type", nil)
+            travelButton:SetAttribute("spell", nil)
+            travelButton:SetScript("OnEnter", nil)
+            travelButton:Hide()
+            return
+        end
+
+        travelButton:SetAttribute("type", "spell")
+        travelButton:SetAttribute("spell", teleportSpell)
+
+        local texture = GetSpellTexture(teleportSpell)
+
+        if texture then
+            travelButton.icon:SetTexture(texture)
+        end
+
+        travelButton:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(teleportSpell)
+            GameTooltip:AddLine((sender or "The customer") .. " is in " .. (zoneName or "another zone") ..
+                                    ". Click to travel to them.", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+
+        travelButton:Show()
+    end)
+end
+
+function UI.hideTravelButton()
+    -- No sender: unconditional, for when the customer has gone entirely.
+    applyTravelState(nil, nil, nil)
+end
+
+-- The location line, and the travel shortcut that may sit beside it.
+--
+-- While the customer is in the same zone the line keeps showing a distance, which is the useful
+-- number then. Once they are somewhere else the distance is meaningless - often "Unknown" across
+-- a continent - so the line says where they actually are instead, which is the thing you would
+-- otherwise go and read off the party frame.
+--
+-- The travel button appears only when all of it checks out: we can resolve them to a party unit,
+-- they are elsewhere, that somewhere is a city with a portal spell, and the mage genuinely knows
+-- the teleport for it.
+function UI.updateLocationLine(sender, distanceLabel)
+    -- C_Map wants a unit token; a player name resolves for UnitInParty but not for the map calls.
+    local unit = Utils.getPartyUnitToken(sender)
+    local customerZone = unit and Utils.getUnitZoneName(unit)
+    local playerZone = Utils.getUnitZoneName("player")
+
+    if not customerZone or not playerZone or customerZone == playerZone then
+        local playerX, playerY, playerInstanceID = UnitPosition("player")
+        local targetX, targetY, targetInstanceID = UnitPosition(unit or sender)
+
+        if playerX and targetX and playerInstanceID == targetInstanceID then
+            distanceLabel:SetText(string.format("Distance: %.1f yards",
+                Utils.calculateDistance(playerX, playerY, targetX, targetY)))
+        else
+            distanceLabel:SetText("Distance: Unknown")
+        end
+
+        UI.hideTravelButton()
+        return
+    end
+
+    distanceLabel:SetText("In: " .. customerZone)
+
+    local city = Utils.resolveCityFromZoneName(customerZone)
+
+    applyTravelState(sender, city and Utils.getKnownTeleportSpell(city) or nil, customerZone)
+end
+
+
 function UI.updateDestinationChoices(sender, inviteData)
     local ticketFrame = UI.ticketFrame
 
@@ -948,7 +1057,7 @@ function UI.updateTicketFrame()
 
     -- All action-button mutations stay together: SetAttribute and SetEnabled are protected,
     -- and updating only part of the button in combat can leave its icon and action disagreeing.
-    local applied = UI.runWhenOutOfCombat(function()
+    local applied = UI.runWhenOutOfCombat("actionButton", function()
         -- The ticket may have been removed or changed while this update was deferred.
         if not UI.ticketFrame or UI.ticketFrame.currentSender ~= sender or
             Events.pendingInvites[sender] ~= inviteData then
@@ -1197,7 +1306,36 @@ function UI.showPaginatedTicketWindow()
         -- Leave a row for destination choices. Single-destination tickets simply keep it empty.
         distanceLabel:SetPoint("TOPLEFT", destinationLabel, "BOTTOMLEFT", 0, -28)
         distanceLabel:SetText("Distance: N/A")
+        -- Bounded so a long zone name cannot run under the travel button sitting to its right.
+        distanceLabel:SetWidth(150)
+        distanceLabel:SetWordWrap(false)
+        distanceLabel:SetJustifyH("LEFT")
         ticketFrame.distanceLabel = distanceLabel
+
+        -- Small optional shortcut beside the location line: teleport to where the customer is
+        -- standing. Deliberately not the main button - that stays the portal, so the ticket always
+        -- means the same thing. Protected like the portal button, so it hangs off labelContainer
+        -- (a Frame) rather than the FontString it sits beside.
+        local travelButton = CreateFrame("Button", nil, labelContainer, "SecureActionButtonTemplate")
+        travelButton:SetSize(16, 16)
+        travelButton:SetPoint("TOPLEFT", labelContainer, "TOPLEFT", 178, -111)
+        travelButton:RegisterForClicks("AnyUp", "AnyDown")
+        travelButton:Hide()
+
+        local travelIcon = travelButton:CreateTexture(nil, "BACKGROUND")
+        travelIcon:SetAllPoints()
+        travelButton.icon = travelIcon
+
+        local travelHighlight = travelButton:CreateTexture(nil, "HIGHLIGHT")
+        travelHighlight:SetAllPoints()
+        travelHighlight:SetTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+        travelHighlight:SetBlendMode("ADD")
+
+        travelButton:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        ticketFrame.travelButton = travelButton
 
         -- The customer's own words, shown permanently. The destination guess can be wrong, but
         -- the request never is - so it stays on screen next to the portal button rather than

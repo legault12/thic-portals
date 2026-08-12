@@ -250,28 +250,34 @@ function Utils.updateDistanceLabel(sender, distanceLabel)
     Utils.cancelDistanceTicker()
 
     local ticker
-    ticker = C_Timer.NewTicker(1, function()
+
+    local function refresh()
         -- Only update if the label is still for the correct sender
         if UI.ticketFrame and UI.ticketFrame.currentSender ~= sender then
-            stopDistanceTicker(ticker)
+            if ticker then
+                stopDistanceTicker(ticker)
+            end
             return
         end
-        if UnitInParty(sender) then
-            local playerX, playerY, playerInstanceID = UnitPosition("player")
-            local targetX, targetY, targetInstanceID = UnitPosition(sender)
 
-            if playerInstanceID == targetInstanceID then
-                local distance = Utils.calculateDistance(playerX, playerY, targetX, targetY)
-                distanceLabel:SetText(string.format("Distance: %.1f yards", distance))
-            else
-                distanceLabel:SetText("Distance: Unknown")
-            end
+        if UnitInParty(sender) then
+            -- One owner for this line: it shows a distance while the customer is in the same zone
+            -- and where they are when they are not, and the travel button follows the same call.
+            UI.updateLocationLine(sender, distanceLabel)
         else
             distanceLabel:SetText("Distance: N/A")
-            stopDistanceTicker(ticker) -- Cancel the ticker if the player is no longer in the party
-        end
-    end)
+            UI.hideTravelButton()
 
+            if ticker then
+                stopDistanceTicker(ticker) -- Cancel the ticker if the player is no longer in the party
+            end
+        end
+    end
+
+    -- Run once now: a ticket opening should not show a stale line for a second first.
+    refresh()
+
+    ticker = C_Timer.NewTicker(1, refresh)
     distanceTicker = ticker
 end
 
@@ -618,6 +624,147 @@ function Utils.formatCopperValue(totalCost)
 end
 
 -- Function to check if a spell rank is known by the player
+-- Find the party unit token for a customer we track by name.
+--
+-- Tickets are keyed by player name, and UnitInParty happily accepts a name - but the C_Map calls
+-- want a real unit token, and quietly return nothing for a name. Resolve once, here, and keep the
+-- name purely for display.
+function Utils.getPartyUnitToken(name)
+    if not name or name == "" then
+        return nil
+    end
+
+    -- Tickets may carry either "Player" or "Player-Realm".
+    local wantedName, wantedRealm = name:match("^([^%-]+)%-?(.*)$")
+
+    if not wantedName then
+        return nil
+    end
+
+    wantedName = wantedName:lower()
+
+    if wantedRealm == "" then
+        wantedRealm = nil
+    else
+        wantedRealm = wantedRealm:gsub("%s+", ""):lower()
+    end
+
+    for index = 1, (MAX_PARTY_MEMBERS or 4) do
+        local token = "party" .. index
+
+        if UnitExists(token) then
+            local unitName, unitRealm = UnitName(token)
+
+            if unitName and unitName:lower() == wantedName then
+                if not wantedRealm then
+                    -- Bare-name ticket: the name alone decides, as before.
+                    return token
+                end
+
+                -- The ticket named a realm, so it has to match. UnitName reports an empty realm
+                -- for units on our own realm rather than naming it, so resolve that to the
+                -- player's realm instead of treating it as a wildcard - accepting a blank would
+                -- match a same-realm namesake of a cross-realm customer.
+                local effectiveRealm = unitRealm
+
+                if not effectiveRealm or effectiveRealm == "" then
+                    effectiveRealm = GetRealmName and GetRealmName() or nil
+                end
+
+                -- Realm suffixes carry no spaces ("Thunder Bluff" -> "ThunderBluff").
+                if effectiveRealm and effectiveRealm:gsub("%s+", ""):lower() == wantedRealm then
+                    return token
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- The zone a unit is standing in, or nil when the client will not tell us. Takes a unit token, not
+-- a name - see Utils.getPartyUnitToken.
+function Utils.getUnitZoneName(unit)
+    if not unit or not C_Map or not C_Map.GetBestMapForUnit then
+        return nil
+    end
+
+    local mapID = C_Map.GetBestMapForUnit(unit)
+
+    if not mapID then
+        return nil
+    end
+
+    local mapInfo = C_Map.GetMapInfo(mapID)
+
+    return mapInfo and mapInfo.name or nil
+end
+
+-- Which canonical city a zone name refers to, or nil when it is not one we can travel to.
+-- Matched by name against the same canonical cities the portal map uses, so it needs no table of
+-- map IDs - those differ between the Classic Era and TBC clients this addon both supports.
+-- "Stormwind City" -> Stormwind, "The Exodar" -> Exodar, "Silvermoon City" -> Silvermoon.
+function Utils.resolveCityFromZoneName(zoneName)
+    if not zoneName then
+        return nil
+    end
+
+    local normalized = zoneName:lower()
+    local best = nil
+
+    for city in pairs(Utils.PortalSpells) do
+        -- Longest match wins so a hypothetical overlap cannot pick the shorter city.
+        if normalized:find(city:lower(), 1, true) and (not best or #city > #best) then
+            best = city
+        end
+    end
+
+    return best
+end
+
+-- Whether the player's spellbook contains a spell with this exact name, ignoring rank. Used to ask
+-- "can this mage actually teleport there", which also settles faction and level with no extra
+-- logic: a Horde mage simply has no Teleport: Stormwind.
+function Utils.isSpellKnownByName(spellName)
+    if not spellName then
+        return false
+    end
+
+    local i = 1
+
+    while i <= 1024 do
+        local knownName = GetSpellBookItemName(i, BOOKTYPE_SPELL)
+
+        if not knownName then
+            break
+        end
+
+        if knownName == spellName then
+            return true
+        end
+
+        i = i + 1
+    end
+
+    return false
+end
+
+-- The self-teleport for a canonical city, but only if the mage knows it. Every "Portal: X" has a
+-- matching "Teleport: X", so the name is derived rather than stored.
+function Utils.getKnownTeleportSpell(city)
+    if not city or not Utils.PortalSpells[city] then
+        return nil
+    end
+
+    local spellName = "Teleport: " .. city
+
+    if not Utils.isSpellKnownByName(spellName) then
+        return nil
+    end
+
+    return spellName
+end
+
 function Utils.isSpellRankKnown(spellBaseName, rank)
     if not spellBaseName or not rank then
         return false

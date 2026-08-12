@@ -208,11 +208,48 @@ check(keywordsOf(candidatesFor("port from stormwind to if, or sw")) == "stormwin
 check(keywordsOf(candidatesFor("port from stormwind to if, or sw", "darn")) == "stormwind,if",
     "an absent selection must not alter deduplication")
 
+-- 7. Zone name -> canonical city, for the ticket's location line and travel button --------------
+
+local zoneCases = {{"Stormwind City", "Stormwind"}, {"Ironforge", "Ironforge"}, {"Darnassus", "Darnassus"},
+                   {"The Exodar", "Exodar"}, {"Orgrimmar", "Orgrimmar"}, {"Thunder Bluff", "Thunder Bluff"},
+                   {"Undercity", "Undercity"}, {"Silvermoon City", "Silvermoon"}, {"Shattrath City", "Shattrath"},
+                   -- Zones that are not travel targets must resolve to nothing, so no button appears.
+                   {"Elwynn Forest", nil}, {"Dustwallow Marsh", nil}, {"Swamp of Sorrows", nil},
+                   {"Tirisfal Glades", nil}, {"Teldrassil", nil}, {"Hellfire Peninsula", nil}, {"Durotar", nil}}
+
+for _, case in ipairs(zoneCases) do
+    local zone, wanted = case[1], case[2]
+    local got = Utils.resolveCityFromZoneName(zone)
+
+    check(got == wanted, string.format("zone %q should resolve to %s, got %s", zone, tostring(wanted), tostring(got)))
+end
+
+check(Utils.resolveCityFromZoneName(nil) == nil, "a nil zone must resolve to nothing")
+
+-- Every canonical city must be reachable from its own bare name, so the derived teleport spell
+-- name lines up with the portal map.
+for city in pairs(Utils.PortalSpells) do
+    check(Utils.resolveCityFromZoneName(city) == city, city .. " should resolve from its own name")
+end
+
+-- The teleport is only offered when the spellbook actually has it.
+_G.GetSpellBookItemName = function(index)
+    local book = {"Fireball", "Teleport: Stormwind", "Portal: Stormwind"}
+    return book[index]
+end
+_G.BOOKTYPE_SPELL = "spell"
+
+check(Utils.getKnownTeleportSpell("Stormwind") == "Teleport: Stormwind", "a known teleport should be offered")
+check(Utils.getKnownTeleportSpell("Orgrimmar") == nil, "an unknown teleport must not be offered")
+check(Utils.getKnownTeleportSpell("Nowhere") == nil, "a non-city must not produce a teleport")
+check(Utils.getKnownTeleportSpell(nil) == nil, "a nil city must not produce a teleport")
+
 -- ---------------------------------------------------------------------------------------------
 
 if failures > 0 then
     error(string.format("portal matcher: %d check(s) failed", failures))
 end
 
-print(string.format("portal matcher: %d aliases, %d regressions, faction split, custom fallback and dedupe all passed",
-    aliasCount, #regressions))
+print(string.format(
+    "portal matcher: %d aliases, %d regressions, faction split, custom fallback, dedupe, %d zone lookups all passed",
+    aliasCount, #regressions, #zoneCases))
