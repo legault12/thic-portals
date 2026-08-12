@@ -53,6 +53,7 @@ local DEFAULT_SETTINGS = {
     consecutiveLeavesWithoutPayment = 0,
     leaveWithoutPaymentThreshold = 2,
     maxSimultaneousTickets = 15,
+    reagentWarningThreshold = 20,
 
     addonEnabled = false,
     disableGlobalChannels = false,
@@ -262,6 +263,9 @@ function Config.initializeSavedVariables()
     end
     if not Config.Settings.disableAFKProtection then
         Config.Settings.disableAFKProtection = DEFAULT_SETTINGS.disableAFKProtection
+    end
+    if not Config.Settings.reagentWarningThreshold then
+        Config.Settings.reagentWarningThreshold = DEFAULT_SETTINGS.reagentWarningThreshold
     end
     if not Config.Settings.itemTipsReceived then
         Config.Settings.itemTipsReceived = 0

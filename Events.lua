@@ -261,6 +261,15 @@ function Events.onEvent(self, event, ...)
         if unit == "player" then
             local spellName = GetSpellInfo(spellID)
 
+            -- A cast burns a rune. Check a frame later, once the bag has caught up.
+            local reagentKind = Utils.reagentForSpell(spellName)
+
+            if reagentKind then
+                C_Timer.After(0, function()
+                    Utils.checkReagentStock(reagentKind)
+                end)
+            end
+
             -- Only the teleport this intent was armed for ends it; the whisper itself went out at
             -- the start of the cast, not here.
             InviteTrade.clearTravelAnnouncement(nil, spellName)

@@ -265,6 +265,8 @@ function handleCommand(msg)
 
         Utils.print(string.format("Group %d/%d, %d seat(s) free, %d invite(s) out, %d more can be invited.", used,
             maximum, free, outstanding, slots))
+        Utils.print(string.format("%s: %d, %s: %d.", Utils.REAGENTS.portal.name, Utils.getReagentCount("portal"),
+            Utils.REAGENTS.teleport.name, Utils.getReagentCount("teleport")))
     elseif command == "add" then
         local name, destination = rest:match("^(%S+)%s*(.-)$")
 

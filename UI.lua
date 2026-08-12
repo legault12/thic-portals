@@ -228,6 +228,9 @@ function UI.toggleAddonEnabledState()
         toggleButtonOverlayTexture:SetTexture("Interface\\AddOns\\ThicPortals\\Media\\Logo\\thicportalsopen.tga") -- Replace with the path to your image
         UI.addonEnabledCheckbox:SetValue(true)
         Utils.print("The portal shop is open!")
+
+        -- Say the stock out loud on opening, good or bad: running dry mid-session stops the shop.
+        Utils.checkAllReagentStock(true)
     else
         toggleButtonOverlayTexture:SetTexture("Interface\\AddOns\\ThicPortals\\Media\\Logo\\thicportalsclosed.tga") -- Replace with the path to your image
         UI.addonEnabledCheckbox:SetValue(false)
@@ -405,6 +408,32 @@ function UI.setIconSpell(inviteData, destination)
 
     -- Set the icon texture for the portal spell
     UI.setIconSpellTexture(inviteData.actionButton, inviteData.portal)
+
+    -- The button had no tooltip at all. Naming the spell and the reagents left is the cheapest
+    -- place to notice you are about to run dry.
+    inviteData.actionButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+
+        if inviteData.portal.matched then
+            GameTooltip:SetText(inviteData.portal.spellName)
+        else
+            GameTooltip:SetText("No portal matches this destination")
+        end
+
+        local runes = Utils.getReagentCount("portal")
+
+        if runes > 0 then
+            GameTooltip:AddLine(Utils.REAGENTS.portal.name .. ": " .. runes, 0.6, 0.6, 0.6, true)
+        else
+            GameTooltip:AddLine("No " .. Utils.REAGENTS.portal.name .. " - this will fail.", 1, 0.3, 0.3, true)
+        end
+
+        GameTooltip:Show()
+    end)
+
+    inviteData.actionButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
 end
 
 function UI.setTradeIcon(inviteData)
@@ -745,10 +774,19 @@ local function applyTravelState(sender, teleportSpell, zoneName, city)
         end
 
         travelButton:SetScript("OnEnter", function(self)
+            local runes = Utils.getReagentCount("teleport")
+
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(teleportSpell)
             GameTooltip:AddLine((sender or "The customer") .. " is in " .. (zoneName or "another zone") ..
                                     ". Click to travel to them.", 1, 1, 1, true)
+
+            if runes > 0 then
+                GameTooltip:AddLine(Utils.REAGENTS.teleport.name .. ": " .. runes, 0.6, 0.6, 0.6, true)
+            else
+                GameTooltip:AddLine("No " .. Utils.REAGENTS.teleport.name .. " - this will fail.", 1, 0.3, 0.3, true)
+            end
+
             GameTooltip:Show()
         end)
 
@@ -1884,6 +1922,24 @@ function UI.createOptionsPanel()
         end
     end)
     maxTicketsGroup:AddChild(maxTicketsEditBox)
+
+    -- How few runes counts as low. Warned about when the shop opens and when stock crosses it.
+    local reagentThresholdEditBox = AceGUI:Create("EditBox")
+    reagentThresholdEditBox:SetLabel("Warn when runes fall to")
+    reagentThresholdEditBox:SetText(tostring(Config.Settings.reagentWarningThreshold))
+    reagentThresholdEditBox:SetWidth(200)
+    reagentThresholdEditBox:SetCallback("OnEnterPressed", function(widget, event, text)
+        local value = tonumber(text)
+
+        if value and value >= 0 then
+            Config.Settings.reagentWarningThreshold = math.floor(value)
+            Utils.print("Rune warning threshold set to: " .. Config.Settings.reagentWarningThreshold)
+        else
+            Utils.print("Invalid value. Please enter a number of runes, or 0 to only warn when empty.")
+            widget:SetText(tostring(Config.Settings.reagentWarningThreshold))
+        end
+    end)
+    maxTicketsGroup:AddChild(reagentThresholdEditBox)
 
     scroll:AddChild(maxTicketsGroup)
     scroll:AddChild(largeVerticalGap)

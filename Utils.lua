@@ -646,6 +646,99 @@ function Utils.indexOfTicket(ticketList, sender)
     return nil
 end
 
+-- Reagents. Portals and teleports each burn one per cast, and running dry mid-session stops the
+-- shop dead, so the counts are worth surfacing before that happens.
+--
+-- Counted by item id and by name, taking whichever answers: an id that turns out to be wrong for
+-- this client still leaves the name working, and vice versa on a localised one.
+Utils.REAGENTS = {
+    portal = {
+        name = "Rune of Portals",
+        itemId = 17032,
+        spellPrefix = "Portal: "
+    },
+    teleport = {
+        name = "Rune of Teleportation",
+        itemId = 17031,
+        spellPrefix = "Teleport: "
+    }
+}
+
+function Utils.getReagentCount(kind)
+    local reagent = Utils.REAGENTS[kind]
+
+    if not reagent or not GetItemCount then
+        return 0
+    end
+
+    return math.max(tonumber(GetItemCount(reagent.itemId)) or 0, tonumber(GetItemCount(reagent.name)) or 0)
+end
+
+-- Which reagent a spell consumes, from its name. "Portal: Ironforge" -> "portal".
+function Utils.reagentForSpell(spellName)
+    if not spellName then
+        return nil
+    end
+
+    for kind, reagent in pairs(Utils.REAGENTS) do
+        if spellName:sub(1, #reagent.spellPrefix) == reagent.spellPrefix then
+            return kind
+        end
+    end
+
+    return nil
+end
+
+-- Warned once per level, re-armed when stock recovers, so a long session low on runes does not turn
+-- into a wall of warnings. Running out is its own level: having been told "low" a while ago is no
+-- reason to stay quiet at the moment the shop actually stops working.
+local reagentWarned = {}
+
+function Utils.reagentWarningThreshold()
+    return tonumber(Config.Settings and Config.Settings.reagentWarningThreshold) or 20
+end
+
+-- Returns the count. Announces when stock is at or below the threshold, or always when asked -
+-- which is what opening the shop wants, so the answer is stated whether it is good news or bad.
+function Utils.checkReagentStock(kind, announceAlways)
+    local reagent = Utils.REAGENTS[kind]
+
+    if not reagent then
+        return 0
+    end
+
+    local count = Utils.getReagentCount(kind)
+    local threshold = Utils.reagentWarningThreshold()
+
+    if count > threshold then
+        reagentWarned[kind] = nil
+
+        if announceAlways then
+            Utils.print(reagent.name .. ": " .. count)
+        end
+
+        return count
+    end
+
+    local level = (count == 0) and "empty" or "low"
+
+    if announceAlways or reagentWarned[kind] ~= level then
+        reagentWarned[kind] = level
+
+        if count == 0 then
+            Utils.print("Out of " .. reagent.name .. " - portals and teleports will fail until you restock.")
+        else
+            Utils.print("Low on " .. reagent.name .. ": " .. count .. " left.")
+        end
+    end
+
+    return count
+end
+
+function Utils.checkAllReagentStock(announceAlways)
+    return Utils.checkReagentStock("portal", announceAlways), Utils.checkReagentStock("teleport", announceAlways)
+end
+
 -- Ticket lifecycle.
 --
 -- The service a ticket has had is stored as the moments it happened, and the state is derived from
