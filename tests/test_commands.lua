@@ -162,7 +162,7 @@ run("add Gralint if")
 local ticket = Events.pendingInvites["Gralint"]
 check(ticket ~= nil, "an ungrouped add should create a ticket")
 check(invited[1] == "Gralint", "an ungrouped add should send an invite, got " .. tostring(invited[1]))
-check(ticket.hasJoined == false, "an ungrouped customer has not joined yet")
+check(Utils.hasTicketJoined(ticket) == false, "an ungrouped customer has not joined yet")
 check(ticket.destination == "if", "the supplied destination should be stored")
 check(ticket.destinationLocked == true, "a destination given by hand should be locked")
 check(said("Invited and now tracking"), "the command should confirm the invite")
@@ -176,7 +176,7 @@ run("add Keefs org")
 ticket = Events.pendingInvites["Keefs"]
 check(ticket ~= nil, "a grouped add should create a ticket")
 check(#invited == 0, "a grouped customer must not be re-invited")
-check(ticket.hasJoined == true, "a grouped customer counts as joined")
+check(Utils.hasTicketJoined(ticket) == true, "a grouped customer counts as joined")
 check(uiCalls[#uiCalls] == "show", "adopting a grouped customer should show the ticket window")
 check(said("already in the party"), "the command should say they were adopted")
 
@@ -184,16 +184,16 @@ check(said("already in the party"), "the command should say they were adopted")
 
 reset()
 run("add Gralint if")
-Events.pendingInvites["Gralint"].hasPaid = true
-Events.pendingInvites["Gralint"].travelled = true
+Events.pendingInvites["Gralint"].paidAt = 1
+Events.pendingInvites["Gralint"].completedAt = 1
 invited = {}
 
 run("add Gralint org")
 
 check(said("already tracked"), "a duplicate add should be refused")
 check(Events.pendingInvites["Gralint"].destination == "if", "a refused add must not change the destination")
-check(Events.pendingInvites["Gralint"].hasPaid == true, "a refused add must not discard payment state")
-check(Events.pendingInvites["Gralint"].travelled == true, "a refused add must not discard travel state")
+check(Utils.isTicketPaid(Events.pendingInvites["Gralint"]), "a refused add must not discard payment state")
+check(Utils.isTicketComplete(Events.pendingInvites["Gralint"]), "a refused add must not discard travel state")
 check(#invited == 0, "a refused add must not send another invite")
 
 -- The refusal points at the commands that can do what was probably meant.
@@ -308,15 +308,17 @@ check(said("(locked)"), "the list should flag a locked destination")
 check(said("1 ticket(s) tracked"), "the list should report the count")
 
 grouped["Gralint"] = true
-Events.pendingInvites["Gralint"].hasJoined = true
+Events.pendingInvites["Gralint"].joinedAt = 1
 run("list")
 check(said("joined"), "state should follow the ticket")
 
-Events.pendingInvites["Gralint"].hasPaid = true
+Events.pendingInvites["Gralint"].paidAt = 1
 run("list")
-check(said("paid"), "a paid ticket should read as paid")
+-- Payment is not a stage: the ticket is still joined, with payment noted alongside.
+check(said("(paid)"), "a paid ticket should be flagged as paid")
+check(said("joined"), "paying must not move the ticket out of joined")
 
-Events.pendingInvites["Gralint"].travelled = true
+Events.pendingInvites["Gralint"].completedAt = 1
 run("list")
 check(said("complete"), "a travelled ticket should read as complete")
 
@@ -337,8 +339,8 @@ check(table.concat(ordered, ",") == "Zeta,Alpha,Mid",
     "tickets should be ordered oldest first, got " .. table.concat(ordered, ","))
 
 -- Only joined customers get a ticket in the window.
-Events.pendingInvites["Alpha"].hasJoined = true
-Events.pendingInvites["Mid"].hasJoined = true
+Events.pendingInvites["Alpha"].joinedAt = 1
+Events.pendingInvites["Mid"].joinedAt = 1
 check(table.concat(Utils.orderTicketsByArrival(Events.pendingInvites, true), ",") == "Alpha,Mid",
     "the window queue should only contain joined customers")
 
@@ -408,7 +410,7 @@ local function joinedQueue(names, times)
     for index, name in ipairs(names) do
         clock = times[index]
         run("add " .. name .. " if")
-        Events.pendingInvites[name].hasJoined = true
+        Events.pendingInvites[name].joinedAt = times[index]
     end
 end
 
@@ -476,7 +478,7 @@ check(index == 2, "Cara should now be at position 2, got " .. index)
 joinedQueue({"Anna", "Boris"}, {100, 200})
 clock = 400
 run("add Dmitri if")
-Events.pendingInvites["Dmitri"].hasJoined = true
+Events.pendingInvites["Dmitri"].joinedAt = 1
 list, index = rebuild("Anna", 1)
 check(table.concat(list, ",") == "Anna,Boris,Dmitri", "a new ticket should append at the end")
 check(list[index] == "Anna", "a new arrival must not move the displayed customer")
@@ -535,7 +537,7 @@ run("add Stranded if")
 
 local adopted = Events.pendingInvites["Stranded"]
 check(adopted ~= nil, "a grouped customer should be adoptable even when the group is full")
-check(adopted.hasJoined == true, "an adopted customer counts as joined")
+check(Utils.hasTicketJoined(adopted), "an adopted customer counts as joined")
 check(#invited == 0, "adopting must not send an invite")
 check(said("already in the party"), "the confirmation should say they were adopted")
 

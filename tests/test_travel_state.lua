@@ -305,7 +305,7 @@ local function newTicket(name, destination)
         name = name,
         fullName = name .. "-Spineshatter",
         destination = destination,
-        hasJoined = true
+        joinedAt = 1
     }
     _G.Events.pendingInvites[name] = inviteData
     return inviteData

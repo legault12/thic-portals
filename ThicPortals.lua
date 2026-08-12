@@ -55,15 +55,7 @@ local function findTicket(name)
 end
 
 local function describeTicketState(inviteData)
-    if inviteData.travelled then
-        return "complete"
-    elseif inviteData.hasPaid then
-        return "paid"
-    elseif inviteData.hasJoined then
-        return "joined"
-    end
-
-    return "invited"
+    return Utils.getTicketState(inviteData)
 end
 
 -- /Tp parse - explain what the matcher makes of a message.
@@ -256,8 +248,10 @@ function handleCommand(msg)
             local inviteData = Events.pendingInvites[sender]
             local waited = inviteData.timestamp and (time() - inviteData.timestamp) or 0
 
-            print(string.format("  %-14s %-10s %-9s %8s%s", sender, inviteData.destination or "-",
+            -- Payment is not a stage, so it rides alongside the state rather than replacing it.
+            print(string.format("  %-14s %-10s %-9s %8s%s%s", sender, inviteData.destination or "-",
                 describeTicketState(inviteData), Utils.formatWaitTime(waited),
+                Utils.isTicketPaid(inviteData) and "  (paid)" or "",
                 inviteData.destinationLocked and "  (locked)" or ""))
         end
 
@@ -305,7 +299,7 @@ function handleCommand(msg)
 
             if alreadyGrouped then
                 -- Already in the group: this is recovery for a customer the addon lost track of.
-                Events.pendingInvites[shortName].hasJoined = true
+                Utils.markTicketJoined(Events.pendingInvites[shortName])
                 UI.showPaginatedTicketWindow()
                 Utils.print("Now tracking " .. shortName .. " (already in the party).")
             else

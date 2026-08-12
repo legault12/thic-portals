@@ -34,7 +34,7 @@ end
 -- Function to check if a player can be invited (based on cooldown)
 local function stillOnCooldown(playerName)
     -- If the player is in the pending invites table and has not joined and the cooldown hasn't expired
-    return Events.pendingInvites[playerName] and not Events.pendingInvites[playerName].hasJoined and
+    return Events.pendingInvites[playerName] and not Utils.hasTicketJoined(Events.pendingInvites[playerName]) and
                (time() - Events.pendingInvites[playerName].timestamp) < Config.Settings.inviteCooldown
 end
 
@@ -99,9 +99,11 @@ function InviteTrade.createPendingInvite(playerName, playerClass, sender, messag
         fullName = sender,
         destination = destinationKeyword,
         originalMessage = message,
-        hasJoined = false,
-        hasPaid = false,
-        travelled = false
+        -- Lifecycle stages are recorded as the moments they happen; absent means not yet.
+        joinedAt = nil,
+        paidAt = nil,
+        portalCastAt = nil,
+        completedAt = nil
     }
 
     InviteTrade.setSenderExpiryTimer(playerName)
@@ -182,7 +184,7 @@ function InviteTrade.handleInviteAndMessage(sender, playerName, playerClass, mes
     -- Check if we've reached the maximum number of simultaneous tickets
     local currentTicketCount = 0
     for _, inviteData in pairs(Events.pendingInvites) do
-        if inviteData.hasJoined then
+        if Utils.hasTicketJoined(inviteData) then
             currentTicketCount = currentTicketCount + 1
         end
     end
@@ -450,7 +452,7 @@ local function oldestTicketAwaiting(spellName)
     for _, sender in ipairs(Utils.orderTicketsByArrival(Events.pendingInvites, true)) do
         local inviteData = Events.pendingInvites[sender]
 
-        if inviteData and not inviteData.travelled and not Utils.isTicketPortalAlive(inviteData) and
+        if inviteData and not Utils.isTicketComplete(inviteData) and not Utils.isTicketPortalAlive(inviteData) and
             inviteData.destination then
             local portal = Utils.getMatchingPortal(inviteData.destination)
 
@@ -588,7 +590,7 @@ function InviteTrade.watchForPlayerProximity(sender)
                 Utils.debugPrint(sender .. " has moved away, assuming they took the portal.")
 
                 if Events.pendingInvites[sender] then
-                    Events.pendingInvites[sender].travelled = true
+                    Utils.markTicketComplete(Events.pendingInvites[sender])
                 end
                 ticker:Cancel() -- Cancel the ticker when the player has moved away
             end

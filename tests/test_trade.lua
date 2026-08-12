@@ -152,7 +152,7 @@ local function reset(customerMoney, customerItems)
             name = "Gralint",
             fullName = "Gralint-Spineshatter",
             destination = "if",
-            hasJoined = true
+            joinedAt = 1
         }
     }
 

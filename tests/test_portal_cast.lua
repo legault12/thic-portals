@@ -67,8 +67,8 @@ local function ticket(name, destination, arrivedAt)
         fullName = name,
         destination = destination,
         timestamp = arrivedAt,
-        hasJoined = true,
-        travelled = false
+        joinedAt = arrivedAt,
+        completedAt = nil
     }
     Events.pendingInvites[name] = inviteData
     return inviteData
@@ -150,13 +150,13 @@ check(InviteTrade.attributePortalCast(nil) == nil, "no spell credits nobody")
 -- Customers who have already travelled are not candidates.
 reset()
 local gone = ticket("Anna", "sw", 100)
-gone.travelled = true
+gone.completedAt = 1
 check(InviteTrade.attributePortalCast("Portal: Stormwind") == nil, "a travelled customer must not be credited")
 
 -- Nor are customers who have not joined yet.
 reset()
 local waiting = ticket("Anna", "sw", 100)
-waiting.hasJoined = false
+waiting.joinedAt = nil
 check(InviteTrade.attributePortalCast("Portal: Stormwind") == nil, "an un-joined customer has no ticket to credit")
 
 -- 5. Stale and mismatched intents fall back rather than misfire ----------------------------------

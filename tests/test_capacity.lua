@@ -143,7 +143,7 @@ local function outstandingInvite(name, at)
     Events.pendingInvites[name] = {
         name = name,
         fullName = name,
-        hasJoined = false,
+        joinedAt = nil,
         timestamp = at
     }
 end
@@ -171,7 +171,7 @@ reset()
 groupSize = 3
 Events.pendingInvites["Anna"] = {
     name = "Anna",
-    hasJoined = true,
+    joinedAt = 1,
     timestamp = now
 }
 slots, capacityFree, outstanding = Utils.availableInviteSlots(Events.pendingInvites)

@@ -606,7 +606,7 @@ function Utils.orderTicketsByArrival(pendingInvites, joinedOnly)
     local ordered = {}
 
     for sender, inviteData in pairs(pendingInvites or {}) do
-        if not joinedOnly or inviteData.hasJoined then
+        if not joinedOnly or Utils.hasTicketJoined(inviteData) then
             ordered[#ordered + 1] = {
                 sender = sender,
                 timestamp = inviteData.timestamp or 0
@@ -646,6 +646,76 @@ function Utils.indexOfTicket(ticketList, sender)
     return nil
 end
 
+-- Ticket lifecycle.
+--
+-- The service a ticket has had is stored as the moments it happened, and the state is derived from
+-- which of them exist. Storing "hasJoined = true" alongside "travelled = true" left the truth
+-- spread across three booleans that could disagree; a timestamp cannot contradict itself, and it
+-- doubles as the record of when.
+--
+-- Payment is deliberately NOT a position in this sequence. Customers pay before the portal, after
+-- it, or not at all, so it is an orthogonal fact about the transaction rather than a stage of it.
+--
+-- Where the customer is standing is also not here. That is live information about the world, and
+-- per the same rule that keeps currentCity out of the record, it is computed when needed rather
+-- than frozen into the ticket.
+Utils.TICKET_INVITED = "invited" -- asked for, not in the group yet
+Utils.TICKET_JOINED = "joined" -- in the group, waiting to be served
+Utils.TICKET_SERVED = "served" -- a portal has been cast for them
+Utils.TICKET_COMPLETE = "complete" -- they took it
+
+function Utils.hasTicketJoined(inviteData)
+    return inviteData ~= nil and inviteData.joinedAt ~= nil
+end
+
+function Utils.isTicketPaid(inviteData)
+    return inviteData ~= nil and inviteData.paidAt ~= nil
+end
+
+function Utils.isTicketComplete(inviteData)
+    return inviteData ~= nil and inviteData.completedAt ~= nil
+end
+
+function Utils.getTicketState(inviteData)
+    if not inviteData then
+        return nil
+    end
+
+    if inviteData.completedAt then
+        return Utils.TICKET_COMPLETE
+    end
+
+    if inviteData.portalCastAt then
+        return Utils.TICKET_SERVED
+    end
+
+    if inviteData.joinedAt then
+        return Utils.TICKET_JOINED
+    end
+
+    return Utils.TICKET_INVITED
+end
+
+-- Each stage is recorded once. Re-marking keeps the first moment, because "when did they join" has
+-- one answer however many times the roster updates.
+function Utils.markTicketJoined(inviteData, at)
+    if inviteData and not inviteData.joinedAt then
+        inviteData.joinedAt = at or time()
+    end
+end
+
+function Utils.markTicketPaid(inviteData, at)
+    if inviteData and not inviteData.paidAt then
+        inviteData.paidAt = at or time()
+    end
+end
+
+function Utils.markTicketComplete(inviteData, at)
+    if inviteData and not inviteData.completedAt then
+        inviteData.completedAt = at or time()
+    end
+end
+
 -- An outstanding invite holds a seat for about this long. WoW's own invite popup lapses after
 -- roughly a minute, while our record lives for three, so reserving for the full record would keep
 -- turning customers away long after the seat came free.
@@ -677,7 +747,8 @@ function Utils.availableInviteSlots(pendingInvites, now)
     now = now or time()
 
     for _, inviteData in pairs(pendingInvites or {}) do
-        if not inviteData.hasJoined and inviteData.timestamp and (now - inviteData.timestamp) < Utils.INVITE_SEAT_HOLD then
+        if not Utils.hasTicketJoined(inviteData) and inviteData.timestamp and
+            (now - inviteData.timestamp) < Utils.INVITE_SEAT_HOLD then
             outstanding = outstanding + 1
         end
     end

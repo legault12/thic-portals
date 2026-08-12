@@ -1117,7 +1117,7 @@ function UI.updateTicketFrame()
 
         local actionButton = UI.ticketFrame.actionButton
 
-        if inviteData.travelled then
+        if Utils.isTicketComplete(inviteData) then
             if actionButton.icon then
                 actionButton.icon:Hide()
             end
@@ -1190,7 +1190,7 @@ function UI.updateTicketFrame()
     end
 
     -- Show/hide Paid/Complete TICK based on status
-    if inviteData.travelled then
+    if Utils.isTicketComplete(inviteData) then
         -- Show Complete TICK
         if UI.ticketFrame.completeText then
             UI.ticketFrame.completeText:Show()
@@ -1207,7 +1207,7 @@ function UI.updateTicketFrame()
         end
 
         showRemoveAndClearActionButton()
-    elseif inviteData.hasPaid then
+    elseif Utils.isTicketPaid(inviteData) then
         -- Show Paid TICK if trade is complete but not travelled yet
         if UI.ticketFrame.completeText then
             UI.ticketFrame.completeText:Hide()
@@ -1239,14 +1239,14 @@ function UI.updateTicketFrame()
     end
 
     -- Ticker for dynamic updates (when a user trades gold or travels), only run this if we are not travelled
-    if not inviteData.travelled then
+    if not Utils.isTicketComplete(inviteData) then
         -- Cancel previous ticker if any
         if currentTicker then
             currentTicker:Cancel()
         end
 
         currentTicker = C_Timer.NewTicker(1, function()
-            if Events.pendingInvites[sender] and Events.pendingInvites[sender].travelled then
+            if Utils.isTicketComplete(Events.pendingInvites[sender]) then
                 -- Show Complete TICK
                 if UI.ticketFrame.completeText then
                     UI.ticketFrame.completeText:Show()
@@ -1274,7 +1274,7 @@ function UI.updateTicketFrame()
                 if UI.ticketFrame.currentSender == sender then
                     UI.updateTicketFrame()
                 end
-            elseif Events.pendingInvites[sender] and Events.pendingInvites[sender].hasPaid then
+            elseif Utils.isTicketPaid(Events.pendingInvites[sender]) then
                 -- Show Paid TICK if trade is complete but not travelled yet
                 if UI.ticketFrame.paidText then
                     UI.ticketFrame.paidText:Show()

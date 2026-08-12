@@ -16,8 +16,9 @@ Events.uiInitialized = false -- Flag to track if UI has been created
 --     fullName = "PlayerName-Realm",
 --     class = "Warrior",
 --     destination = "Darna",
---     hasJoined = false,
---     hasPaid = false,
+--     joinedAt = nil,   -- set when they accept the invite
+--     paidAt = nil,     -- set when a trade completes with payment
+--     completedAt = nil, -- set when they are inferred to have taken the portal
 --     ticketFrame = nil, -- Reference to the ticket frame for this player
 --     targetted = false, -- Whether this player is currently targeted
 -- }
@@ -172,8 +173,8 @@ function Events.onEvent(self, event, ...)
         -- Collect senders to remove after iteration to avoid table modification during loop
         local toRemove = {}
         for sender, inviteData in pairs(Events.pendingInvites) do
-            if UnitInParty(sender) and not inviteData.hasJoined then
-                inviteData.hasJoined = true
+            if UnitInParty(sender) and not Utils.hasTicketJoined(inviteData) then
+                Utils.markTicketJoined(inviteData)
 
                 FlashClientIcon() -- Flash the WoW icon in the taskbar
 
@@ -191,7 +192,7 @@ function Events.onEvent(self, event, ...)
 
                 InviteTrade.markSelfWithStar()
                 InviteTrade.watchForPlayerProximity(sender)
-            elseif not UnitInParty(sender) and inviteData.hasJoined then
+            elseif not UnitInParty(sender) and Utils.hasTicketJoined(inviteData) then
                 table.insert(toRemove, sender)
             end
         end
@@ -205,7 +206,7 @@ function Events.onEvent(self, event, ...)
             Events.pendingInvites[sender] = nil
             InviteTrade.clearTravelAnnouncement(sender)
             Utils.debugPrint(sender .. " has left the party and has been removed from tracking.")
-            if not (inviteData and inviteData.hasPaid) and not Config.Settings.disableAFKProtection then
+            if not Utils.isTicketPaid(inviteData) and not Config.Settings.disableAFKProtection then
                 handleConsecutiveLeavesWithoutPayment()
             end
         end
@@ -450,7 +451,7 @@ function Events.handleTradeComplete()
                 SendChatMessage(message, "WHISPER", nil, Events.pendingInvites[Config.currentTraderName].fullName)
             end
 
-            Events.pendingInvites[Config.currentTraderName].hasPaid = true
+            Utils.markTicketPaid(Events.pendingInvites[Config.currentTraderName])
             Events.forgetTrade()
         else
             Utils.debugPrint("No pending invite found for current trader, ignoring transaction.")

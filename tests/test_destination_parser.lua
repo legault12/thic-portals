@@ -91,7 +91,7 @@ end
 InviteTrade.createPendingInvite = function(playerName, _, _, message, destination)
     Events.pendingInvites[playerName] = {
         timestamp = 0,
-        hasJoined = false,
+        joinedAt = nil,
         originalMessage = message,
         destination = destination
     }
@@ -101,7 +101,7 @@ InviteTrade.handleInviteAndMessage("Buyer-Realm", "Buyer", "MAGE", "wtb portal i
 assert(inviteCount == 1, "Require Destination must not reject an origin-worded portal request")
 assert(Events.pendingInvites.Buyer.destination == "sw", "new request should retain the city fallback")
 
-Events.pendingInvites.Buyer.hasJoined = true
+Events.pendingInvites.Buyer.joinedAt = 1
 Events.pendingInvites.Buyer.destination = "if"
 Config.Settings.disableSmartMatching = true
 Config.Settings.commonPhrases = {}
