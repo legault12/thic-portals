@@ -193,15 +193,14 @@ function InviteTrade.handleInviteAndMessage(sender, playerName, playerClass, mes
         return
     end
 
-    -- The group itself is the hard limit, and it is smaller than the ticket setting: a party seats
-    -- four customers whatever maxSimultaneousTickets says. Inviting past it fails, and the customer
-    -- is left holding a record that blocks them from asking again until it expires.
-    local slots, free, outstanding = Utils.availableInviteSlots(Events.pendingInvites)
+    local roomToInvite, freeSeats, outstandingInvites = InviteTrade.hasInviteCapacity()
 
-    if slots < 1 then
+    if not roomToInvite then
+        -- Say it once per episode: this fires on every request that arrives while full, and the
+        -- point is to tell the seller custom is being turned away, not to fill their chat with it.
         if not InviteTrade.capacityNoticeShown then
             InviteTrade.capacityNoticeShown = true
-            Utils.print("Group is full (" .. free .. " seat(s) free, " .. outstanding ..
+            Utils.print("Group is full (" .. freeSeats .. " seat(s) free, " .. outstandingInvites ..
                             " invite(s) already out) - not inviting anyone else for now.")
         end
 
@@ -371,6 +370,20 @@ function InviteTrade.announceTravelStart(spellName)
     Utils.debugPrint("Told " .. pending.sender .. " we are teleporting to " .. pending.city .. ".")
 
     return true
+end
+
+-- Whether there is room to invite somebody new, and what the seats look like.
+--
+-- The single place that decides. Both the automatic chat path and /Tp add call it so they cannot
+-- drift: a manual add is recovery, not an exemption from the party's physical size. Adopting a
+-- customer who is already in the group is a different question and never comes here - they are
+-- occupying a seat already.
+--
+-- The configured maxSimultaneousTickets stays a separate operator limit, checked on its own.
+function InviteTrade.hasInviteCapacity()
+    local slots, free, outstanding = Utils.availableInviteSlots(Events.pendingInvites)
+
+    return slots > 0, free, outstanding
 end
 
 -- Portal casts are attributed to the ticket whose button started them.

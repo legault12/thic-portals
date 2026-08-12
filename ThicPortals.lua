@@ -272,6 +272,11 @@ function handleCommand(msg)
 
         local shortName = name and (name:match("^([^%-]+)") or name)
         local alreadyTracked = shortName and findTicket(shortName)
+        -- Someone already in the group is occupying a seat, so adopting them costs nothing and is
+        -- allowed however full we are. Inviting somebody new goes through the same gate as the
+        -- automatic path.
+        local alreadyGrouped = shortName and UnitInParty(shortName)
+        local roomToInvite, freeSeats, outstandingInvites = InviteTrade.hasInviteCapacity()
 
         if not name or name == "" then
             Utils.print("Usage: /Tp add [player] [destination] - track a customer the addon missed")
@@ -279,6 +284,9 @@ function handleCommand(msg)
             -- Overwriting would silently discard payment, lock, travel and announcement state.
             Utils.print(alreadyTracked .. " is already tracked. Use /Tp destination to change where " ..
                             "they are going, or /Tp remove to drop the ticket first.")
+        elseif not alreadyGrouped and not roomToInvite then
+            Utils.print("No room to invite " .. shortName .. ": " .. freeSeats .. " seat(s) free, " ..
+                            outstandingInvites .. " invite(s) already out. Try again when a seat frees up.")
         elseif destination ~= "" and not Utils.isUsableDestination(destination) then
             Utils.print("'" .. destination .. "' is not a destination this addon can resolve. Add it " ..
                             "under Destination Keywords in the options panel, or leave it off and set " ..
@@ -291,7 +299,7 @@ function handleCommand(msg)
                 Events.pendingInvites[shortName].destinationLocked = true
             end
 
-            if UnitInParty(shortName) then
+            if alreadyGrouped then
                 -- Already in the group: this is recovery for a customer the addon lost track of.
                 Events.pendingInvites[shortName].hasJoined = true
                 UI.showPaginatedTicketWindow()

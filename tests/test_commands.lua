@@ -60,6 +60,15 @@ end
 _G.UnitInParty = function(name)
     return grouped[name] == true
 end
+local groupSize = 0
+_G.GetNumGroupMembers = function()
+    return groupSize
+end
+_G.IsInRaid = function()
+    return false
+end
+_G.MEMBERS_PER_RAID_GROUP = 5
+_G.MAX_RAID_MEMBERS = 40
 _G.UnitFactionGroup = function()
     return "Alliance"
 end
@@ -140,6 +149,8 @@ local function reset()
     invited = {}
     timers = {}
     grouped = {}
+    groupSize = 0
+    InviteTrade.capacityNoticeShown = false
     InviteTrade.pendingTravelAnnouncement = nil
 end
 
@@ -488,6 +499,54 @@ check(Utils.formatWaitTime(3600) == "1h 00m", "an hour switches to hours and min
 check(Utils.formatWaitTime(7565) == "2h 06m", "long waits read as hours, got " .. Utils.formatWaitTime(7565))
 check(Utils.formatWaitTime(-5) == "0s", "a negative wait clamps to zero")
 check(Utils.formatWaitTime(nil) == "0s", "a missing wait reads as zero")
+
+-- 8d. /Tp add obeys the same capacity gate as the automatic path -----------------------------------
+
+-- A manual add is recovery, not an exemption from the size of a party.
+reset()
+groupSize = 5
+run("add Newcomer if")
+
+check(Events.pendingInvites["Newcomer"] == nil, "a full group must not gain a manually added ticket")
+check(#invited == 0, "a full group must not send a manual invite")
+check(said("No room to invite"), "the refusal should be explicit, got: " .. table.concat(output, " | "))
+check(said("0 seat(s) free"), "the refusal should show the seat maths")
+
+-- Unlike the automatic path's once-per-episode notice, an explicit command always answers.
+run("add Another if")
+check(said("No room to invite"), "a second manual add should be refused again, not silently")
+
+-- A seat spoken for by an invite already out also blocks a manual add.
+reset()
+groupSize = 4 -- one seat free
+run("add First if")
+check(#invited == 1, "the free seat should go to the first customer")
+
+run("add Second if")
+check(Events.pendingInvites["Second"] == nil, "an outstanding invite holds the last seat")
+check(#invited == 1, "no second invite should go out")
+check(said("1 invite(s) already out"), "the refusal should name the outstanding invite")
+
+-- Someone already in the group is occupying a seat, so adopting them is always allowed.
+reset()
+groupSize = 5
+grouped["Stranded"] = true
+run("add Stranded if")
+
+local adopted = Events.pendingInvites["Stranded"]
+check(adopted ~= nil, "a grouped customer should be adoptable even when the group is full")
+check(adopted.hasJoined == true, "an adopted customer counts as joined")
+check(#invited == 0, "adopting must not send an invite")
+check(said("already in the party"), "the confirmation should say they were adopted")
+
+-- The operator limit is still its own thing: plenty of seats, but the ticket cap is reached.
+reset()
+groupSize = 1
+Config.Settings.maxSimultaneousTickets = 1
+grouped["Held"] = true
+run("add Held if")
+check(Events.pendingInvites["Held"] ~= nil, "the ticket cap does not block manual adoption")
+Config.Settings.maxSimultaneousTickets = 15
 
 -- 9. Usage messages --------------------------------------------------------------------------------
 
