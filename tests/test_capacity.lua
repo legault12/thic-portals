@@ -68,8 +68,14 @@ _G.InviteUnit = function(name)
 end
 _G.SendChatMessage = function()
 end
+local timers = {}
+
 _G.C_Timer = {
-    After = function()
+    After = function(delay, callback)
+        timers[#timers + 1] = {
+            delay = delay,
+            callback = callback
+        }
     end
 }
 _G.print = function(...)
@@ -107,6 +113,8 @@ local function reset()
     inRaid = false
     isLeader = true
     converted = 0
+    timers = {}
+    InviteTrade.raidConversionPending = false
     invited = {}
     printed = {}
     Events.pendingInvites = {}
@@ -282,7 +290,7 @@ reset()
 groupSize = 5
 check(InviteTrade.convertToRaid() == true, "converting a full led party should succeed")
 check(converted == 1, "the client call should be made once, got " .. converted)
-check(said("Converted the group to a raid"), "the conversion should be announced")
+check(said("Converting the group to a raid"), "the conversion should be announced")
 check(said("cannot queue for dungeons"), "the cost to customers should be stated")
 
 -- Refusing explains itself rather than failing quietly.
@@ -326,6 +334,58 @@ Config.Settings.autoConvertToRaid = true
 InviteTrade.handleInviteAndMessage("Later", "Later", "MAGE", "wtb portal sw", false)
 check(#invited == 1, "a raid has room for the next customer")
 check(converted == 0, "and nothing further needs converting")
+
+-- 7. A conversion already in flight ------------------------------------------------------------------
+
+-- Converting is a server round trip. Requests keep arriving in the second it takes, and each one
+-- would have fired another conversion at a group that is already becoming a raid.
+reset()
+groupSize = 5
+Config.Settings.autoConvertToRaid = true
+
+for _ = 1, 5 do
+    InviteTrade.handleInviteAndMessage("Asker", "Asker", "MAGE", "wtb portal sw", false)
+end
+
+check(converted == 1, "repeated requests during the round trip should convert once, got " .. converted)
+check(InviteTrade.raidConversionPending == true, "the conversion should be marked in flight")
+check(InviteTrade.canConvertToRaid() == false, "nothing else should convert while one is in flight")
+
+local _, reasonWhilePending = InviteTrade.canConvertToRaid()
+check(reasonWhilePending and reasonWhilePending:find("already been requested", 1, true),
+    "and should say why, got " .. tostring(reasonWhilePending))
+
+-- The roster confirming a raid is what releases it.
+inRaid = true
+Events = Events or {}
+InviteTrade.clearRaidConversionPending()
+check(InviteTrade.raidConversionPending == false, "confirmation should clear the flag")
+
+-- A conversion that never lands must not wedge the shop into refusing forever.
+reset()
+groupSize = 5
+check(InviteTrade.convertToRaid() == true, "the first conversion should go out")
+check(InviteTrade.raidConversionPending == true, "and be held in flight")
+
+local timeout
+for _, timer in ipairs(timers) do
+    if timer.delay and timer.delay >= 5 then
+        timeout = timer.callback
+    end
+end
+check(timeout ~= nil, "a timeout should be scheduled")
+
+timeout()
+check(InviteTrade.raidConversionPending == false, "the timeout should release the flag")
+check(InviteTrade.canConvertToRaid() == true, "and allow another attempt")
+
+-- The timeout does not undo a conversion that did land.
+reset()
+groupSize = 5
+InviteTrade.convertToRaid()
+inRaid = true
+InviteTrade.clearRaidConversionPending()
+check(InviteTrade.canConvertToRaid() == false, "an actual raid still cannot be converted again")
 
 -- ------------------------------------------------------------------------------------------------
 

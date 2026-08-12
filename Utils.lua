@@ -287,7 +287,7 @@ function Utils.updateDistanceLabel(sender, distanceLabel)
             return
         end
 
-        if UnitInParty(sender) then
+        if Utils.isInGroup(sender) then
             -- One owner for this line: it shows a distance while the customer is in the same zone
             -- and where they are when they are not, and the travel button follows the same call.
             UI.updateLocationLine(sender, distanceLabel)
@@ -367,7 +367,8 @@ end
 -- Function to check if the player is within range using the UnitPosition API
 function Utils.isPlayerWithinRange(sender, range)
     local playerX, playerY, playerInstanceID = UnitPosition("player")
-    local targetX, targetY, targetInstanceID = UnitPosition(sender)
+    -- Through the token, so this keeps working once the group is a raid.
+    local targetX, targetY, targetInstanceID = UnitPosition(Utils.getGroupUnitToken(sender) or sender)
 
     if playerInstanceID == targetInstanceID then
         local distance = Utils.calculateDistance(playerX, playerY, targetX, targetY)
@@ -1039,12 +1040,16 @@ function Utils.formatCopperValue(totalCost)
 end
 
 -- Function to check if a spell rank is known by the player
--- Find the party unit token for a customer we track by name.
+-- Find the unit token for a customer we track by name, in a party or a raid.
 --
--- Tickets are keyed by player name, and UnitInParty happily accepts a name - but the C_Map calls
--- want a real unit token, and quietly return nothing for a name. Resolve once, here, and keep the
--- name purely for display.
-function Utils.getPartyUnitToken(name)
+-- Tickets are keyed by player name, and some APIs accept a name - but the C_Map calls want a real
+-- unit token and quietly return nothing for a name. Resolve once, here, and keep the name purely
+-- for display.
+--
+-- Both group shapes, because converting to a raid renumbers everybody: party1-4 stop covering the
+-- customers, and every feature built on this - location, distance, travel, queue grouping,
+-- auto-completion - would decide they had vanished.
+function Utils.getGroupUnitToken(name)
     if not name or name == "" then
         return nil
     end
@@ -1064,8 +1069,15 @@ function Utils.getPartyUnitToken(name)
         wantedRealm = wantedRealm:gsub("%s+", ""):lower()
     end
 
-    for index = 1, (MAX_PARTY_MEMBERS or 4) do
-        local token = "party" .. index
+    local prefix, count = "party", (MAX_PARTY_MEMBERS or 4)
+
+    if IsInRaid and IsInRaid() then
+        prefix = "raid"
+        count = math.min(tonumber(GetNumGroupMembers and GetNumGroupMembers()) or 0, MAX_RAID_MEMBERS or 40)
+    end
+
+    for index = 1, count do
+        local token = prefix .. index
 
         if UnitExists(token) then
             local unitName, unitRealm = UnitName(token)
@@ -1100,11 +1112,19 @@ end
 -- The canonical city a tracked customer is standing in, or nil if they are not in one we know.
 -- Wraps the name -> token -> zone -> city chain that both the travel button and the destination
 -- chips need.
+-- Whether a tracked customer is still with us, in either group shape.
+--
+-- Replaces the bare UnitInParty checks: in a raid, party1-4 only cover your own subgroup, so
+-- everybody else reads as having left and their tickets get torn down.
+function Utils.isInGroup(name)
+    return Utils.getGroupUnitToken(name) ~= nil
+end
+
 -- Where a tracked customer is: the zone they are standing in, and the canonical city if it is one
 -- we can travel to. Returns both because the queue groups by zone - a customer in Elwynn Forest is
 -- somewhere, even though it is nowhere we can teleport.
 function Utils.getCustomerLocation(sender)
-    local unit = Utils.getPartyUnitToken(sender)
+    local unit = Utils.getGroupUnitToken(sender)
     local zoneName = unit and Utils.getUnitZoneName(unit)
 
     if not zoneName then
@@ -1201,9 +1221,22 @@ function Utils.buildQueueOverview(pendingInvites, now)
     return order
 end
 
+-- How many lines the overview will show before it starts summarising. A raid holds thirty-nine
+-- customers, which with a heading per zone would run off the screen, so the list is bounded and
+-- says what it left out.
+Utils.QUEUE_OVERVIEW_MAX_LINES = 24
+
 -- Render the overview as lines, so the same data can go to chat or to a frame.
-function Utils.formatQueueOverview(overview)
+function Utils.formatQueueOverview(overview, maxLines)
+    maxLines = maxLines or Utils.QUEUE_OVERVIEW_MAX_LINES
+
     local lines = {}
+    local shown = 0
+    local total = 0
+
+    for _, group in ipairs(overview) do
+        total = total + #group.tickets
+    end
 
     for _, group in ipairs(overview) do
         local header = group.location or "Location unknown"
@@ -1214,9 +1247,18 @@ function Utils.formatQueueOverview(overview)
             header = header .. " - teleport available"
         end
 
+        -- Reserve a line for the remainder note, so the list never ends mid-thought.
+        if shown < total and #lines + 2 > maxLines - 1 then
+            break
+        end
+
         lines[#lines + 1] = header
 
         for _, ticket in ipairs(group.tickets) do
+            if #lines + 1 > maxLines - 1 and shown < total then
+                break
+            end
+
             local detail = ticket.state
 
             if ticket.distance then
@@ -1229,7 +1271,12 @@ function Utils.formatQueueOverview(overview)
 
             lines[#lines + 1] = string.format("  %-14s %-8s %-22s %s", ticket.sender,
                 ticket.destination or "?", detail, Utils.formatWaitTime(ticket.waited))
+            shown = shown + 1
         end
+    end
+
+    if shown < total then
+        lines[#lines + 1] = string.format("  ... and %d more waiting", total - shown)
     end
 
     if #lines == 0 then
@@ -1240,7 +1287,7 @@ function Utils.formatQueueOverview(overview)
 end
 
 -- The zone a unit is standing in, or nil when the client will not tell us. Takes a unit token, not
--- a name - see Utils.getPartyUnitToken.
+-- a name - see Utils.getGroupUnitToken.
 function Utils.getUnitZoneName(unit)
     if not unit or not C_Map or not C_Map.GetBestMapForUnit then
         return nil

@@ -170,10 +170,16 @@ function Events.onEvent(self, event, ...)
     elseif event == "GROUP_ROSTER_UPDATE" then
         printEvent(event)
 
+        -- The roster is how we learn a requested raid conversion actually happened.
+        if InviteTrade.raidConversionPending and IsInRaid and IsInRaid() then
+            InviteTrade.clearRaidConversionPending()
+            Utils.debugPrint("Raid conversion confirmed by the roster.")
+        end
+
         -- Collect senders to remove after iteration to avoid table modification during loop
         local toRemove = {}
         for sender, inviteData in pairs(Events.pendingInvites) do
-            if UnitInParty(sender) and not Utils.hasTicketJoined(inviteData) then
+            if Utils.isInGroup(sender) and not Utils.hasTicketJoined(inviteData) then
                 Utils.markTicketJoined(inviteData)
 
                 FlashClientIcon() -- Flash the WoW icon in the taskbar
@@ -192,7 +198,7 @@ function Events.onEvent(self, event, ...)
 
                 InviteTrade.markSelfWithStar()
                 InviteTrade.watchForPlayerProximity(sender)
-            elseif not UnitInParty(sender) and Utils.hasTicketJoined(inviteData) then
+            elseif not Utils.isInGroup(sender) and Utils.hasTicketJoined(inviteData) then
                 table.insert(toRemove, sender)
             end
         end

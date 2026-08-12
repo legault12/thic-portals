@@ -391,7 +391,21 @@ end
 -- is standing in: a raid cannot use the dungeon finder, and a customer who was in the middle of
 -- ordinary party content will notice. It is the seller's call, so it is a setting and a command
 -- rather than something that quietly happens.
+-- Requested, but the server has not confirmed it yet. Several requests can arrive in the second
+-- it takes to come back, and each would fire another conversion.
+InviteTrade.raidConversionPending = false
+
+local RAID_CONVERSION_TIMEOUT = 10
+
+function InviteTrade.clearRaidConversionPending()
+    InviteTrade.raidConversionPending = false
+end
+
 function InviteTrade.canConvertToRaid()
+    if InviteTrade.raidConversionPending then
+        return false, "a conversion has already been requested"
+    end
+
     if IsInRaid and IsInRaid() then
         return false, "the group is already a raid"
     end
@@ -425,7 +439,18 @@ function InviteTrade.convertToRaid()
         ConvertToRaid()
     end
 
-    Utils.print("Converted the group to a raid - room for far more customers now.")
+    -- Held until the roster confirms the raid, with a timeout so a conversion that never lands
+    -- cannot wedge the shop into refusing forever.
+    InviteTrade.raidConversionPending = true
+
+    C_Timer.After(RAID_CONVERSION_TIMEOUT, function()
+        if InviteTrade.raidConversionPending then
+            Utils.debugPrint("Raid conversion was never confirmed; allowing another attempt.")
+            InviteTrade.clearRaidConversionPending()
+        end
+    end)
+
+    Utils.print("Converting the group to a raid - room for far more customers once it lands.")
     Utils.print("Customers in a raid cannot queue for dungeons or ordinary party content while grouped.")
 
     return true
@@ -662,6 +687,10 @@ function InviteTrade.completeIfArrived(sender)
         return false
     end
 
+    -- Contract worth being explicit about: this marks the ticket complete and then removes it in
+    -- the same breath, so the "complete" state never appears in the queue or /Tp list for a
+    -- customer closed this way. The state exists for the distance heuristic, which leaves the
+    -- ticket in place for the seller to dismiss. Arrival needs no confirming, so it does not.
     Utils.markTicketComplete(inviteData)
     Utils.print(sender .. " arrived in " .. city .. " - closing the ticket.")
 
@@ -699,7 +728,7 @@ function InviteTrade.watchForPlayerProximity(sender)
     local flagProximityReached = false
 
     ticker = C_Timer.NewTicker(1, function()
-        if UnitInParty(sender) then
+        if Utils.isInGroup(sender) then
             -- Arrival closes the ticket outright. The distance heuristic below stays as the
             -- fallback for customers whose location we cannot read.
             if InviteTrade.completeIfArrived(sender) then

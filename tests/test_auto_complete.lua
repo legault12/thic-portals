@@ -266,6 +266,35 @@ check(InviteTrade.completeIfArrived("Gralint") == false, "the setting should swi
 check(Events.pendingInvites.Gralint ~= nil, "with it off, the seller closes tickets themselves")
 check(#uninvited == 0, "with it off, nobody is dropped from the group")
 
+-- 7. The contract: auto-completion closes the ticket rather than showing it as complete ------------
+
+-- Worth pinning because it looks like an omission. The ticket is marked complete and removed in the
+-- same breath, so a customer closed this way never appears as "complete" anywhere - the state is
+-- reachable only through the distance heuristic, which leaves the ticket up for the seller to
+-- dismiss. Arrival needs no confirming, so it does not wait to be dismissed.
+ticket = customer({
+    wants = "if",
+    standingIn = "Ironforge",
+    served = true
+})
+
+check(InviteTrade.completeIfArrived("Gralint") == true, "precondition: it completes")
+check(Utils.isTicketComplete(ticket), "the record itself is marked complete before removal")
+check(Events.pendingInvites.Gralint == nil, "but it is gone from the queue immediately")
+check(Utils.getTicketState(ticket) == Utils.TICKET_COMPLETE,
+    "the detached record still reports complete, for anything holding a reference")
+
+-- The distance heuristic is the path that does leave a visible complete ticket.
+ticket = customer({
+    wants = "if",
+    standingIn = "Stormwind City",
+    served = true
+})
+Utils.markTicketComplete(ticket)
+check(Events.pendingInvites.Gralint ~= nil, "the heuristic leaves the ticket in place")
+check(Utils.getTicketState(Events.pendingInvites.Gralint) == Utils.TICKET_COMPLETE,
+    "and that is where a visible complete state comes from")
+
 -- ------------------------------------------------------------------------------------------------
 
 _G.print = realPrint

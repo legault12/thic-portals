@@ -60,6 +60,28 @@ end
 _G.UnitInParty = function(name)
     return grouped[name] == true
 end
+-- Group membership resolves through unit tokens now, so the roster has to exist as tokens too.
+local function rosterList()
+    local names = {}
+    for name, isIn in pairs(grouped) do
+        if isIn then
+            names[#names + 1] = name
+        end
+    end
+    table.sort(names)
+    return names
+end
+_G.UnitExists = function(token)
+    local index = tonumber(tostring(token):match("^party(%d+)$"))
+    return index ~= nil and rosterList()[index] ~= nil
+end
+_G.UnitName = function(token)
+    local index = tonumber(tostring(token):match("^party(%d+)$"))
+    return index and rosterList()[index] or nil, ""
+end
+_G.GetRealmName = function()
+    return "Spineshatter"
+end
 local groupSize = 0
 _G.GetNumGroupMembers = function()
     return groupSize

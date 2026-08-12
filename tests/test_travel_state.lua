@@ -1,4 +1,4 @@
--- Standalone regression tests for resolving a tracked customer to a party unit token, and for the
+-- Standalone regression tests for resolving a tracked customer to a group unit token, and for the
 -- deferred travel-button state that hangs off it.
 --
 -- These cover the integration the pure zone-name tests do not: a ticket is keyed by player name,
@@ -49,7 +49,7 @@ local function check(condition, message)
     end
 end
 
--- 1. Resolving a tracked name to a party unit token ---------------------------------------------
+-- 1. Resolving a tracked name to a group unit token ---------------------------------------------
 
 party = {
     party1 = {
@@ -62,28 +62,28 @@ party = {
     }
 }
 
-check(Utils.getPartyUnitToken("Gralint") == "party1", "a same-realm customer should resolve to their token")
-check(Utils.getPartyUnitToken("Keefs") == "party2", "a cross-realm customer should resolve from the bare name")
-check(Utils.getPartyUnitToken("Keefs-Spineshatter") == "party2", "a Name-Realm ticket should resolve to its token")
-check(Utils.getPartyUnitToken("gralint") == "party1", "name matching should be case-insensitive")
-check(Utils.getPartyUnitToken("Nobody") == nil, "a customer who is not grouped must not resolve")
-check(Utils.getPartyUnitToken("Keefs-Otherrealm") == nil, "a mismatched realm must not resolve")
-check(Utils.getPartyUnitToken(nil) == nil, "a nil name must not resolve")
-check(Utils.getPartyUnitToken("") == nil, "an empty name must not resolve")
+check(Utils.getGroupUnitToken("Gralint") == "party1", "a same-realm customer should resolve to their token")
+check(Utils.getGroupUnitToken("Keefs") == "party2", "a cross-realm customer should resolve from the bare name")
+check(Utils.getGroupUnitToken("Keefs-Spineshatter") == "party2", "a Name-Realm ticket should resolve to its token")
+check(Utils.getGroupUnitToken("gralint") == "party1", "name matching should be case-insensitive")
+check(Utils.getGroupUnitToken("Nobody") == nil, "a customer who is not grouped must not resolve")
+check(Utils.getGroupUnitToken("Keefs-Otherrealm") == nil, "a mismatched realm must not resolve")
+check(Utils.getGroupUnitToken(nil) == nil, "a nil name must not resolve")
+check(Utils.getGroupUnitToken("") == nil, "an empty name must not resolve")
 
 -- A ticket that names a realm must not settle for a unit whose realm is blank: UnitName reports
 -- an empty realm for our own, so a blank is our realm, not a wildcard.
-check(Utils.getPartyUnitToken("Gralint-Somewhereelse") == nil,
+check(Utils.getGroupUnitToken("Gralint-Somewhereelse") == nil,
     "a realm-qualified ticket must not match a same-realm namesake")
-check(Utils.getPartyUnitToken("Gralint-Spineshatter") == "party1",
+check(Utils.getGroupUnitToken("Gralint-Spineshatter") == "party1",
     "a realm-qualified ticket should match when the blank realm resolves to ours")
-check(Utils.getPartyUnitToken("Gralint-Spine Shatter") == "party1", "realm suffixes ignore spaces")
+check(Utils.getGroupUnitToken("Gralint-Spine Shatter") == "party1", "realm suffixes ignore spaces")
 
 -- The gap that made this necessary: the ticket key is a name, and the map API wants a token.
 check(Utils.getUnitZoneName("Gralint") == nil, "a bare name is not a unit token and must not be mapped")
 
 party = {}
-check(Utils.getPartyUnitToken("Gralint") == nil, "nobody resolves once the party is empty")
+check(Utils.getGroupUnitToken("Gralint") == nil, "nobody resolves once the party is empty")
 
 -- 2. Deferred secure updates are keyed, not a single slot ---------------------------------------
 

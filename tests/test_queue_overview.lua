@@ -366,6 +366,75 @@ check(lines[1]:find("(here)", 1, true) ~= nil, "our own zone should be marked, g
 check(lines[1]:find("teleport available", 1, true) == nil,
     "no point offering a teleport to where we already are, got " .. lines[1])
 
+-- 7. A full raid does not run off the screen -------------------------------------------------------
+
+-- Thirty-nine customers, with a heading per zone, would be far taller than the screen. The pane is
+-- bounded and says what it left out. This is a supported case now that raid conversion exists, not
+-- a theoretical one.
+local crowdZones = {"Stormwind City", "Darnassus", "Ironforge", "The Exodar"}
+local crowd = {}
+local crowdRoster = {}
+
+playerZone = "Stormwind City"
+zones = {
+    player = playerZone
+}
+positions = {}
+knownSpells = {}
+
+for index = 1, 39 do
+    local name = "Customer" .. index
+    local token = "party" .. index
+
+    crowdRoster[token] = name
+    zones[token] = crowdZones[(index % #crowdZones) + 1]
+
+    crowd[name] = {
+        name = name,
+        destination = "if",
+        timestamp = 1000 - index,
+        joinedAt = 1000 - index
+    }
+end
+
+roster = crowdRoster
+_G.MAX_PARTY_MEMBERS = 39 -- stand in for a raid roster; token shape is not what is under test here
+
+local crowded = Utils.buildQueueOverview(crowd)
+local crowdedLines = Utils.formatQueueOverview(crowded)
+
+check(#crowdedLines <= Utils.QUEUE_OVERVIEW_MAX_LINES,
+    "the pane must stay within its line budget, got " .. #crowdedLines .. " of " ..
+        Utils.QUEUE_OVERVIEW_MAX_LINES)
+
+local remainder = crowdedLines[#crowdedLines]
+check(remainder:find("more waiting", 1, true) ~= nil, "it should say what it left out, got " .. remainder)
+
+-- The number it reports has to be the number actually omitted.
+local listed = 0
+for _, line in ipairs(crowdedLines) do
+    if line:find("Customer", 1, true) then
+        listed = listed + 1
+    end
+end
+local claimed = tonumber(remainder:match("(%d+) more"))
+check(claimed == 39 - listed, "the remainder should count the customers not shown: listed " .. listed ..
+    ", claimed " .. tostring(claimed))
+
+-- A short queue is untouched by the cap and gains no remainder line.
+local shortLines = Utils.formatQueueOverview(Utils.buildQueueOverview({
+    Solo = {
+        name = "Solo",
+        destination = "if",
+        timestamp = 900,
+        joinedAt = 900
+    }
+}))
+check(#shortLines == 2, "a single customer needs a heading and a row, got " .. #shortLines)
+check(shortLines[2]:find("more waiting", 1, true) == nil, "and no remainder note")
+
+_G.MAX_PARTY_MEMBERS = 4
+
 -- ------------------------------------------------------------------------------------------------
 
 if failures > 0 then

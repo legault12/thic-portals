@@ -279,7 +279,7 @@ function handleCommand(msg)
         -- Someone already in the group is occupying a seat, so adopting them costs nothing and is
         -- allowed however full we are. Inviting somebody new goes through the same gate as the
         -- automatic path.
-        local alreadyGrouped = shortName and UnitInParty(shortName)
+        local alreadyGrouped = shortName and Utils.isInGroup(shortName)
         local roomToInvite, freeSeats, outstandingInvites = InviteTrade.hasInviteCapacity()
 
         if not name or name == "" then

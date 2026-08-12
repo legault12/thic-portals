@@ -846,8 +846,9 @@ end
 -- they are elsewhere, that somewhere is a city with a portal spell, and the mage genuinely knows
 -- the teleport for it.
 function UI.updateLocationLine(sender, distanceLabel)
-    -- C_Map wants a unit token; a player name resolves for UnitInParty but not for the map calls.
-    local unit = Utils.getPartyUnitToken(sender)
+    -- C_Map wants a unit token, and it must come from the right group shape - see
+    -- Utils.getGroupUnitToken.
+    local unit = Utils.getGroupUnitToken(sender)
     local customerZone = unit and Utils.getUnitZoneName(unit)
     local playerZone = Utils.getUnitZoneName("player")
 
@@ -1423,7 +1424,8 @@ function UI.refreshQueueOverview()
     local lines = Utils.formatQueueOverview(Utils.buildQueueOverview(Events.pendingInvites))
 
     frame.body:SetText(table.concat(lines, "\n"))
-    frame:SetHeight(math.max(90, 56 + #lines * 13))
+    -- Bounded by the line cap in formatQueueOverview, so a full raid cannot run off the screen.
+    frame:SetHeight(math.max(90, math.min(56 + #lines * 13, 56 + Utils.QUEUE_OVERVIEW_MAX_LINES * 13)))
 end
 
 function UI.toggleQueueOverview()
