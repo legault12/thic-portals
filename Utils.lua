@@ -756,8 +756,11 @@ function Utils.availableInviteSlots(pendingInvites, now)
     return math.max(0, free - outstanding), free, outstanding, used, maximum
 end
 
--- How long a cast portal stays usable. Derived, not stored: the ticket records when the portal was
--- cast and whether it is still standing is computed from that.
+-- How long a cast portal stays usable, in seconds. Derived, not stored: the ticket records when
+-- the portal was cast and whether it is still standing is computed from that.
+--
+-- Measured against time(), the same clock as every other lifecycle moment. One-second resolution is
+-- ample for a minute-long window, and sharing a clock is what lets the moments be compared at all.
 Utils.PORTAL_ALIVE_WINDOW = 60
 
 -- Whether the portal cast for this particular ticket is still up.
@@ -769,7 +772,7 @@ function Utils.isTicketPortalAlive(inviteData)
         return false
     end
 
-    return (GetTime() - inviteData.portalCastAt) <= Utils.PORTAL_ALIVE_WINDOW
+    return (time() - inviteData.portalCastAt) <= Utils.PORTAL_ALIVE_WINDOW
 end
 
 -- Which ticket to show once the queue has been rebuilt.

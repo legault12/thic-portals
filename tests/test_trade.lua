@@ -33,11 +33,14 @@ local whispers = {}
 local emotes = {}
 local printed = {}
 
+local clock = 5000
+
 _G.time = function()
-    return 5000
+    return clock
 end
+-- A different domain on purpose: lifecycle moments must all come from time().
 _G.GetTime = function()
-    return 5000
+    return clock + 100000
 end
 _G.date = function()
     return "2026-08-11"
@@ -399,6 +402,87 @@ Events.onEvent(nil, "TRADE_CLOSED")
 fireTimers()
 check(Config.currentTraderName == nil, "the current trade's own cleanup should still run")
 
+-- 8. Payment is only recorded when something was actually received -----------------------------------
+
+local function completeTradeFor(money, items)
+    reset(money, items)
+    Events.pendingInvites.Gralint.joinedAt = clock - 30
+    Events.captureTradeContents()
+    Events.handleTradeComplete()
+    return Events.pendingInvites.Gralint
+end
+
+-- An empty trade is not payment. Marking it as one made a settled-looking ticket out of nothing and
+-- suppressed the unpaid-leave count that AFK protection runs on.
+local settled = completeTradeFor(0, {})
+check(settled.paidAt == nil, "an empty trade must not record payment, got " .. tostring(settled.paidAt))
+check(Utils.isTicketPaid(settled) == false, "an empty trade leaves the ticket unpaid")
+check(whispered("safe travels!"), "an empty trade still gets the no-tip message")
+
+-- Every kind of real payment does record it.
+settled = completeTradeFor(15000, {})
+check(settled.paidAt ~= nil, "a gold tip should record payment")
+
+settled = completeTradeFor(0, {{
+    name = "Rune of Portals",
+    quantity = 20
+}})
+check(settled.paidAt ~= nil, "an item tip should record payment")
+
+settled = completeTradeFor(15000, {{
+    name = "Arcane Dust",
+    quantity = 2
+}})
+check(settled.paidAt ~= nil, "coin and items together should record payment")
+
+-- Paying does not move the ticket along the service sequence.
+check(Utils.getTicketState(settled) == Utils.TICKET_JOINED, "payment must not change the service state, got " ..
+    tostring(Utils.getTicketState(settled)))
+
+-- 9. One clock for the lifecycle -----------------------------------------------------------------------
+
+-- The whole point of recording moments is being able to subtract them. That only works if they come
+-- from the same clock: portalCastAt was taken from GetTime while everything else used time(), which
+-- made every difference between them meaningless.
+reset(20000, {})
+
+clock = 1000
+local journey = Events.pendingInvites.Gralint
+journey.timestamp = clock
+-- reset() seeds a joined ticket; clear it so the join is recorded here, since marking is
+-- deliberately once-only.
+journey.joinedAt = nil
+
+clock = 1030
+Utils.markTicketJoined(journey)
+
+clock = 1090
+Events.captureTradeContents()
+InviteTrade.attributePortalCast("Portal: Ironforge")
+
+clock = 1100
+Events.handleTradeComplete()
+
+clock = 1150
+Utils.markTicketComplete(journey)
+
+check(journey.joinedAt == 1030, "the join moment should be on the wall clock, got " .. tostring(journey.joinedAt))
+check(journey.portalCastAt == 1090, "the portal moment should be on the wall clock, got " ..
+    tostring(journey.portalCastAt))
+check(journey.paidAt == 1100, "the payment moment should be on the wall clock, got " .. tostring(journey.paidAt))
+check(journey.completedAt == 1150, "the completion moment should be on the wall clock, got " ..
+    tostring(journey.completedAt))
+
+-- And the durations the model exists to make answerable are numerically right.
+check(journey.joinedAt - journey.timestamp == 30, "time from request to joining should be 30s, got " ..
+    tostring(journey.joinedAt - journey.timestamp))
+check(journey.portalCastAt - journey.joinedAt == 60, "service time should be 60s, got " ..
+    tostring(journey.portalCastAt - journey.joinedAt))
+check(journey.completedAt - journey.timestamp == 150, "the whole journey should be 150s, got " ..
+    tostring(journey.completedAt - journey.timestamp))
+
+clock = 5000
+
 -- ------------------------------------------------------------------------------------------------
 
 _G.print = realPrint
@@ -407,4 +491,4 @@ if failures > 0 then
     error(string.format("trade: %d check(s) failed", failures))
 end
 
-print("trade: capture, tips, nil safety, flourishes and close/complete ordering all passed")
+print("trade: capture, tips, payment semantics, one clock, nil safety and ordering all passed")

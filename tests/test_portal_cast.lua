@@ -22,8 +22,10 @@ _G.Config = {
 
 local now = 1000
 
+-- Deliberately different domains. GetTime counts from client start and time() is wall clock, so
+-- any lifecycle moment taken from the wrong one stands out immediately instead of coinciding.
 _G.GetTime = function()
-    return now
+    return now + 100000
 end
 _G.time = function()
     return now
@@ -111,6 +113,8 @@ InviteTrade.beginPortalCast("Boris", second, "Portal: Stormwind")
 local served = InviteTrade.attributePortalCast("Portal: Stormwind")
 
 check(served == "Boris", "the cast should be credited to the ticket that armed it, got " .. tostring(served))
+check(second.portalCastAt == now, "the portal moment must be on the lifecycle clock, got " ..
+    tostring(second.portalCastAt) .. " with time() at " .. now)
 check(Utils.isTicketPortalAlive(second) == true, "the armed ticket should have a live portal")
 check(Utils.isTicketPortalAlive(first) == false, "the other Stormwind ticket must NOT be marked served")
 check(Utils.isTicketPortalAlive(other) == false, "an unrelated destination must not be marked served")

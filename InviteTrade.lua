@@ -489,7 +489,9 @@ function InviteTrade.attributePortalCast(spellName)
         return nil
     end
 
-    inviteData.portalCastAt = GetTime()
+    -- time(), like every other lifecycle moment. GetTime() counts from client start, so mixing
+    -- the two made differences between moments meaningless.
+    inviteData.portalCastAt = time()
 
     return sender
 end

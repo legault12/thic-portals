@@ -440,18 +440,22 @@ end
 function Events.handleTradeComplete()
     if Config.currentTraderName then
         if Events.pendingInvites[Config.currentTraderName] then
-            if InviteTrade.checkTradeTip() then
-                -- Send them a thank you!
-                local message = Utils.replacePlaceholders(Config.Settings.tipMessage,
-                    Events.pendingInvites[Config.currentTraderName].destination)
-                SendChatMessage(message, "WHISPER", nil, Events.pendingInvites[Config.currentTraderName].fullName)
-            else
-                local message = Utils.replacePlaceholders(Config.Settings.noTipMessage,
-                    Events.pendingInvites[Config.currentTraderName].destination)
-                SendChatMessage(message, "WHISPER", nil, Events.pendingInvites[Config.currentTraderName].fullName)
-            end
+            local inviteData = Events.pendingInvites[Config.currentTraderName]
+            -- Asked once: it counts the tip and has side effects, and the answer decides both the
+            -- message and whether this counts as payment.
+            local wasPaid = InviteTrade.checkTradeTip()
 
-            Utils.markTicketPaid(Events.pendingInvites[Config.currentTraderName])
+            if wasPaid then
+                local message = Utils.replacePlaceholders(Config.Settings.tipMessage, inviteData.destination)
+                SendChatMessage(message, "WHISPER", nil, inviteData.fullName)
+
+                Utils.markTicketPaid(inviteData)
+            else
+                -- A trade that completed with nothing in it is not payment. Marking it as such made
+                -- an empty trade look settled and suppressed the unpaid-leave count.
+                local message = Utils.replacePlaceholders(Config.Settings.noTipMessage, inviteData.destination)
+                SendChatMessage(message, "WHISPER", nil, inviteData.fullName)
+            end
             Events.forgetTrade()
         else
             Utils.debugPrint("No pending invite found for current trader, ignoring transaction.")
