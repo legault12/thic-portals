@@ -179,7 +179,10 @@ Config.Settings.reagentWarningThreshold = 20
 
 -- A missing setting falls back rather than erroring.
 Config.Settings.reagentWarningThreshold = nil
-check(Utils.reagentWarningThreshold() == 20, "the threshold should default when unset")
+check(Utils.reagentWarningThreshold() == Utils.DEFAULT_REAGENT_WARNING,
+    "the threshold should default when unset, got " .. Utils.reagentWarningThreshold())
+check(Utils.DEFAULT_REAGENT_WARNING < 20, "the default must sit below a full stack of runes, or a normal " ..
+    "starting stock reads as low")
 Config.Settings.reagentWarningThreshold = 20
 
 -- The two reagents warn independently.

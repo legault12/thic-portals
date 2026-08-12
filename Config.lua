@@ -53,7 +53,9 @@ local DEFAULT_SETTINGS = {
     consecutiveLeavesWithoutPayment = 0,
     leaveWithoutPaymentThreshold = 2,
     maxSimultaneousTickets = 15,
-    reagentWarningThreshold = 20,
+    -- Runes stack to 20, so warning at a stack or more scolds you at a normal starting stock.
+    -- Ten is a few casts of runway. Keep in step with Utils.DEFAULT_REAGENT_WARNING.
+    reagentWarningThreshold = 10,
 
     addonEnabled = false,
     disableGlobalChannels = false,

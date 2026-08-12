@@ -698,8 +698,11 @@ end
 -- reason to stay quiet at the moment the shop actually stops working.
 local reagentWarned = {}
 
+-- Keep in step with the Config default of the same name.
+Utils.DEFAULT_REAGENT_WARNING = 10
+
 function Utils.reagentWarningThreshold()
-    return tonumber(Config.Settings and Config.Settings.reagentWarningThreshold) or 20
+    return tonumber(Config.Settings and Config.Settings.reagentWarningThreshold) or Utils.DEFAULT_REAGENT_WARNING
 end
 
 -- Returns the count. Announces when stock is at or below the threshold, or always when asked -
