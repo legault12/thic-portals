@@ -655,12 +655,16 @@ Utils.REAGENTS = {
     portal = {
         name = "Rune of Portals",
         itemId = 17032,
-        spellPrefix = "Portal: "
+        spellPrefix = "Portal: ",
+        -- What actually stops working without it. Only one kind of cast fails, and saying both
+        -- would send the user hunting for a problem that is not there.
+        casts = "portal casts"
     },
     teleport = {
         name = "Rune of Teleportation",
         itemId = 17031,
-        spellPrefix = "Teleport: "
+        spellPrefix = "Teleport: ",
+        casts = "teleport casts"
     }
 }
 
@@ -726,7 +730,7 @@ function Utils.checkReagentStock(kind, announceAlways)
         reagentWarned[kind] = level
 
         if count == 0 then
-            Utils.print("Out of " .. reagent.name .. " - portals and teleports will fail until you restock.")
+            Utils.print("Out of " .. reagent.name .. " - " .. reagent.casts .. " will fail until you restock.")
         else
             Utils.print("Low on " .. reagent.name .. ": " .. count .. " left.")
         end

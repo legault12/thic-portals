@@ -154,6 +154,11 @@ Utils.checkReagentStock("portal")
 check(said("Out of Rune of Portals"), "an empty bag should say so, got: " .. table.concat(printed, " | "))
 check(said("Low on") == false, "empty is not merely low")
 
+-- The consequence has to name the casts that actually stop. Only portals fail without portal runes.
+check(said("portal casts will fail"), "the portal warning should name portal casts, got: " ..
+    table.concat(printed, " | "))
+check(said("teleport casts") == false, "an empty portal stock must not blame teleports")
+
 -- ...and having said it once, it does not repeat either.
 printed = {}
 Utils.checkReagentStock("portal")
@@ -183,6 +188,15 @@ printed = {}
 Utils.checkAllReagentStock()
 check(said("Low on Rune of Teleportation"), "teleport runes should warn on their own")
 check(said("Low on Rune of Portals") == false, "a healthy portal stock should stay quiet")
+
+-- And the teleport consequence names teleports, not portals.
+stock(100, 0)
+printed = {}
+Utils.checkAllReagentStock()
+check(said("Out of Rune of Teleportation"), "an empty teleport stock should say so")
+check(said("teleport casts will fail"), "the teleport warning should name teleport casts, got: " ..
+    table.concat(printed, " | "))
+check(said("portal casts") == false, "an empty teleport stock must not blame portals")
 
 -- ------------------------------------------------------------------------------------------------
 

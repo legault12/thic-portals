@@ -425,7 +425,8 @@ function UI.setIconSpell(inviteData, destination)
         if runes > 0 then
             GameTooltip:AddLine(Utils.REAGENTS.portal.name .. ": " .. runes, 0.6, 0.6, 0.6, true)
         else
-            GameTooltip:AddLine("No " .. Utils.REAGENTS.portal.name .. " - this will fail.", 1, 0.3, 0.3, true)
+            GameTooltip:AddLine("No " .. Utils.REAGENTS.portal.name .. " - " .. Utils.REAGENTS.portal.casts ..
+                                    " will fail.", 1, 0.3, 0.3, true)
         end
 
         GameTooltip:Show()
@@ -784,7 +785,8 @@ local function applyTravelState(sender, teleportSpell, zoneName, city)
             if runes > 0 then
                 GameTooltip:AddLine(Utils.REAGENTS.teleport.name .. ": " .. runes, 0.6, 0.6, 0.6, true)
             else
-                GameTooltip:AddLine("No " .. Utils.REAGENTS.teleport.name .. " - this will fail.", 1, 0.3, 0.3, true)
+                GameTooltip:AddLine("No " .. Utils.REAGENTS.teleport.name .. " - " ..
+                                        Utils.REAGENTS.teleport.casts .. " will fail.", 1, 0.3, 0.3, true)
             end
 
             GameTooltip:Show()
