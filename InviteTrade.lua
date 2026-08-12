@@ -391,14 +391,30 @@ end
 -- is standing in: a raid cannot use the dungeon finder, and a customer who was in the middle of
 -- ordinary party content will notice. It is the seller's call, so it is a setting and a command
 -- rather than something that quietly happens.
--- Requested, but the server has not confirmed it yet. Several requests can arrive in the second
--- it takes to come back, and each would fire another conversion.
-InviteTrade.raidConversionPending = false
+-- Requested, but the server has not confirmed it yet. Several requests can arrive in the second it
+-- takes to come back, and each would fire another conversion.
+--
+-- Holds the generation of the conversion in flight rather than a bare flag, for the same reason the
+-- travel and portal intents do: a timeout belonging to a conversion that has already been confirmed
+-- must not clear a later one armed in the meantime.
+InviteTrade.raidConversionPending = nil
 
 local RAID_CONVERSION_TIMEOUT = 10
+local raidConversionGeneration = 0
 
-function InviteTrade.clearRaidConversionPending()
-    InviteTrade.raidConversionPending = false
+-- Passing no generation clears whatever is in flight, which is what roster confirmation wants.
+function InviteTrade.clearRaidConversionPending(generation)
+    if not InviteTrade.raidConversionPending then
+        return false
+    end
+
+    if generation and InviteTrade.raidConversionPending ~= generation then
+        return false
+    end
+
+    InviteTrade.raidConversionPending = nil
+
+    return true
 end
 
 function InviteTrade.canConvertToRaid()
@@ -441,12 +457,15 @@ function InviteTrade.convertToRaid()
 
     -- Held until the roster confirms the raid, with a timeout so a conversion that never lands
     -- cannot wedge the shop into refusing forever.
-    InviteTrade.raidConversionPending = true
+    raidConversionGeneration = raidConversionGeneration + 1
+
+    local generation = raidConversionGeneration
+
+    InviteTrade.raidConversionPending = generation
 
     C_Timer.After(RAID_CONVERSION_TIMEOUT, function()
-        if InviteTrade.raidConversionPending then
+        if InviteTrade.clearRaidConversionPending(generation) then
             Utils.debugPrint("Raid conversion was never confirmed; allowing another attempt.")
-            InviteTrade.clearRaidConversionPending()
         end
     end)
 

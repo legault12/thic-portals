@@ -86,12 +86,34 @@ _G.print = function(...)
     printed[#printed + 1] = table.concat(parts, " ")
 end
 
-_G.Events = {
-    pendingInvites = {}
+_G.UI = {
+    ticketList = nil,
+    updateTicketList = function()
+    end,
+    updateTicketFrame = function()
+    end,
+    showPaginatedTicketWindow = function()
+    end,
+    toggleAddonEnabledState = function()
+    end
 }
+_G.FlashClientIcon = function()
+end
+_G.SetRaidTarget = function()
+end
+C_Timer.NewTicker = function()
+    return {
+        Cancel = function()
+        end
+    }
+end
 
 local Utils = dofile(addonDirectory .. "/Utils.lua")
 local InviteTrade = dofile(addonDirectory .. "/InviteTrade.lua")
+-- Loaded so the roster handler itself can be driven: the wiring between GROUP_ROSTER_UPDATE and
+-- the conversion flag is part of the contract, and calling the clear function by hand would not
+-- test it.
+local Events = dofile(addonDirectory .. "/Events.lua")
 _G.UI = {
     setIconSpell = function()
     end
@@ -105,6 +127,12 @@ local function check(condition, message)
         failures = failures + 1
         realPrint("  FAIL: " .. message .. "\n")
     end
+end
+
+local function rosterUpdate()
+    Config.Settings.addonEnabled = true
+    Events.pendingInvites = {}
+    Events.onEvent(nil, "GROUP_ROSTER_UPDATE")
 end
 
 local function reset()
@@ -348,24 +376,31 @@ for _ = 1, 5 do
 end
 
 check(converted == 1, "repeated requests during the round trip should convert once, got " .. converted)
-check(InviteTrade.raidConversionPending == true, "the conversion should be marked in flight")
+check(InviteTrade.raidConversionPending ~= nil, "the conversion should be marked in flight")
 check(InviteTrade.canConvertToRaid() == false, "nothing else should convert while one is in flight")
 
 local _, reasonWhilePending = InviteTrade.canConvertToRaid()
 check(reasonWhilePending and reasonWhilePending:find("already been requested", 1, true),
     "and should say why, got " .. tostring(reasonWhilePending))
 
--- The roster confirming a raid is what releases it.
+-- The roster confirming a raid is what releases it - through the real handler, not by hand.
 inRaid = true
-Events = Events or {}
-InviteTrade.clearRaidConversionPending()
-check(InviteTrade.raidConversionPending == false, "confirmation should clear the flag")
+rosterUpdate()
+check(InviteTrade.raidConversionPending == nil, "the roster handler should clear the flag on confirmation")
+
+-- A roster update that does not report a raid leaves it in flight.
+reset()
+groupSize = 5
+InviteTrade.convertToRaid()
+inRaid = false
+rosterUpdate()
+check(InviteTrade.raidConversionPending ~= nil, "a roster update with no raid must not clear the flag")
 
 -- A conversion that never lands must not wedge the shop into refusing forever.
 reset()
 groupSize = 5
 check(InviteTrade.convertToRaid() == true, "the first conversion should go out")
-check(InviteTrade.raidConversionPending == true, "and be held in flight")
+check(InviteTrade.raidConversionPending ~= nil, "and be held in flight")
 
 local timeout
 for _, timer in ipairs(timers) do
@@ -376,7 +411,7 @@ end
 check(timeout ~= nil, "a timeout should be scheduled")
 
 timeout()
-check(InviteTrade.raidConversionPending == false, "the timeout should release the flag")
+check(InviteTrade.raidConversionPending == nil, "the timeout should release the flag")
 check(InviteTrade.canConvertToRaid() == true, "and allow another attempt")
 
 -- The timeout does not undo a conversion that did land.
@@ -384,8 +419,51 @@ reset()
 groupSize = 5
 InviteTrade.convertToRaid()
 inRaid = true
-InviteTrade.clearRaidConversionPending()
+rosterUpdate()
 check(InviteTrade.canConvertToRaid() == false, "an actual raid still cannot be converted again")
+
+-- An old timeout must not release a conversion armed after it.
+--
+-- The sequence: convert, the roster confirms, the raid later breaks back into a party, convert
+-- again - and only then does the first conversion's timeout fire. With a bare flag it would clear
+-- the second conversion and let a third go out at a group already becoming a raid.
+reset()
+groupSize = 5
+
+InviteTrade.convertToRaid() -- A
+local timeoutA
+for _, timer in ipairs(timers) do
+    if timer.delay and timer.delay >= 5 then
+        timeoutA = timer.callback
+    end
+end
+
+inRaid = true
+rosterUpdate() -- A confirmed
+
+inRaid = false -- the raid broke back down to a party
+timers = {}
+InviteTrade.convertToRaid() -- B
+check(InviteTrade.raidConversionPending ~= nil, "B should be in flight")
+
+local generationB = InviteTrade.raidConversionPending
+
+timeoutA()
+
+check(InviteTrade.raidConversionPending == generationB,
+    "A's timeout must not clear B, got " .. tostring(InviteTrade.raidConversionPending) .. " expecting " ..
+        tostring(generationB))
+check(InviteTrade.canConvertToRaid() == false, "and B must still be holding off further conversions")
+
+-- B's own timeout does release B.
+local timeoutB
+for _, timer in ipairs(timers) do
+    if timer.delay and timer.delay >= 5 then
+        timeoutB = timer.callback
+    end
+end
+timeoutB()
+check(InviteTrade.raidConversionPending == nil, "B's own timeout should release it")
 
 -- ------------------------------------------------------------------------------------------------
 
