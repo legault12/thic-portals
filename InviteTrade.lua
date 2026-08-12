@@ -236,6 +236,125 @@ function InviteTrade.handleInviteAndMessage(sender, playerName, playerClass, mes
     updatePendingInviteDestination(playerName, message)
 end
 
+-- Travel announcement: "on my way" whispered to the one customer whose travel button was used.
+--
+-- Scoped to a click rather than to the spell, because a mage teleports for their own reasons all
+-- the time - a manual cast from the spellbook must not whisper anybody. The click only records
+-- intent; the whisper waits for the cast to actually begin, so a click that silently does nothing
+-- promises nothing. It is sent at the START of the cast, not on completion: a teleport takes
+-- around ten seconds, and that wait is exactly when a customer gives up and leaves the group.
+InviteTrade.pendingTravelAnnouncement = nil
+
+-- How long an armed intent stays usable. The cast begins within a frame or two of the click, so
+-- this only has to outlive that gap - and keeping it short is what stops a click that never became
+-- a cast (moving, silenced, out of range) from being consumed by a manual teleport later on.
+local TRAVEL_ANNOUNCEMENT_WINDOW = 2
+
+-- Each arming gets its own token, so a cleared-and-rearmed intent can never be mistaken for the
+-- earlier one by a late event.
+local travelAnnouncementToken = 0
+
+function InviteTrade.beginTravelAnnouncement(sender, inviteData, city, spellName)
+    travelAnnouncementToken = travelAnnouncementToken + 1
+
+    InviteTrade.pendingTravelAnnouncement = {
+        token = travelAnnouncementToken,
+        armedAt = GetTime(),
+        sender = sender,
+        inviteData = inviteData,
+        fullName = inviteData and inviteData.fullName,
+        destination = inviteData and inviteData.destination,
+        city = city,
+        spellName = spellName,
+        announced = false
+    }
+
+    -- Expire actively rather than waiting for some later event to notice. Without this the record
+    -- simply sits there after a click that never cast; the token is what keeps this timer from
+    -- clearing an intent armed after it.
+    local token = travelAnnouncementToken
+
+    C_Timer.After(TRAVEL_ANNOUNCEMENT_WINDOW, function()
+        InviteTrade.clearTravelAnnouncement(nil, nil, token)
+    end)
+
+    return travelAnnouncementToken
+end
+
+-- Forget the pending announcement. Called when the cast ends however it ended, and whenever the
+-- ticket it belongs to is replaced or removed.
+--
+-- Every filter is optional but exact when supplied: a spell failing mid-teleport is usually some
+-- other spell entirely, and cancelling this intent because an unrelated cast failed would lose the
+-- announcement for a teleport that is still perfectly on its way.
+function InviteTrade.clearTravelAnnouncement(sender, spellName, token)
+    local pending = InviteTrade.pendingTravelAnnouncement
+
+    if not pending then
+        return false
+    end
+
+    if sender and pending.sender ~= sender then
+        return false
+    end
+
+    if spellName and pending.spellName ~= spellName then
+        return false
+    end
+
+    if token and pending.token ~= token then
+        return false
+    end
+
+    InviteTrade.pendingTravelAnnouncement = nil
+
+    return true
+end
+
+-- Whisper the customer this teleport was started for. Returns whether anything was sent, which is
+-- what the tests assert on.
+function InviteTrade.announceTravelStart(spellName)
+    local pending = InviteTrade.pendingTravelAnnouncement
+
+    -- Nothing pending: a teleport the mage cast for their own reasons.
+    if not pending or pending.announced then
+        return false
+    end
+
+    -- A different teleport than the one the button was clicked for.
+    if not spellName or pending.spellName ~= spellName then
+        return false
+    end
+
+    -- Armed, but no cast followed. Drop it rather than let a later teleport inherit the intent.
+    if GetTime() - pending.armedAt > TRAVEL_ANNOUNCEMENT_WINDOW then
+        InviteTrade.pendingTravelAnnouncement = nil
+        Utils.debugPrint("Travel announcement for " .. pending.sender .. " expired without a cast.")
+        return false
+    end
+
+    -- The ticket may have been removed, or the customer may have left, during the click.
+    if Events.pendingInvites[pending.sender] ~= pending.inviteData then
+        InviteTrade.pendingTravelAnnouncement = nil
+        return false
+    end
+
+    local template = Config.Settings.travelMessage
+
+    if not template or template == "" then
+        return false
+    end
+
+    pending.announced = true
+
+    SendChatMessage(Utils.replacePlaceholders(template, pending.destination, pending.city), "WHISPER", nil,
+        pending.fullName)
+
+    Utils.debugPrint("Told " .. pending.sender .. " we are teleporting to " .. pending.city .. ".")
+
+    return true
+end
+
 -- Function to set an expiry timer for pending invites
 function InviteTrade.setSenderExpiryTimer(playerName)
     C_Timer.After(180, function()

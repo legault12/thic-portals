@@ -263,10 +263,250 @@ check(table.concat(flushOrder, ",") == "replay,window",
 check(button.shown == true, "a stale unconditional hide must not clear the newly created ticket's travel button")
 check(button.spell == "Teleport: Darnassus", "the new ticket's teleport must survive the flush")
 
+-- 5. The travel announcement is scoped to the click that started it ------------------------------
+
+Config.Settings.travelMessage = "On my way to %location% - meet me there for your %destination% portal."
+
+local whispers = {}
+local now = 1000
+
+_G.GetTime = function()
+    return now
+end
+
+-- Captured rather than run, so the expiry timer can be fired deliberately.
+local scheduled = {}
+
+_G.C_Timer = {
+    After = function(delay, callback)
+        scheduled[#scheduled + 1] = {
+            delay = delay,
+            callback = callback
+        }
+    end
+}
+
+_G.SendChatMessage = function(message, channel, _, target)
+    whispers[#whispers + 1] = {
+        message = message,
+        channel = channel,
+        target = target
+    }
+end
+
+_G.Events = {
+    pendingInvites = {}
+}
+
+local InviteTrade = dofile(addonDirectory .. "/InviteTrade.lua")
+
+local function newTicket(name, destination)
+    local inviteData = {
+        name = name,
+        fullName = name .. "-Spineshatter",
+        destination = destination,
+        hasJoined = true
+    }
+    _G.Events.pendingInvites[name] = inviteData
+    return inviteData
+end
+
+local TRAVEL_TEMPLATE = "On my way to %location% - meet me there for your %destination% portal."
+
+local function reset()
+    whispers = {}
+    scheduled = {}
+    now = 1000
+    -- Restored every time: one case below blanks it to prove the feature can be switched off, and
+    -- leaving it blank silently disabled every check that followed.
+    Config.Settings.travelMessage = TRAVEL_TEMPLATE
+    _G.Events.pendingInvites = {}
+    InviteTrade.pendingTravelAnnouncement = nil
+end
+
+-- A manual teleport, cast from the spellbook with no ticket behind it, must say nothing.
+reset()
+newTicket("Gralint", "if")
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "a manual teleport must not announce")
+check(#whispers == 0, "a manual teleport must whisper nobody")
+
+-- The travel button's own cast whispers exactly its customer, exactly once.
+reset()
+local gralint = newTicket("Gralint", "if")
+newTicket("Keefs", "org") -- also waiting, must not be whispered
+
+InviteTrade.beginTravelAnnouncement("Gralint", gralint, "Darnassus", "Teleport: Darnassus")
+
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == true, "the button's own cast should announce")
+check(#whispers == 1, "exactly one customer should be whispered, got " .. #whispers)
+check(whispers[1].target == "Gralint-Spineshatter", "the whisper should go to the ticket that started it")
+check(whispers[1].channel == "WHISPER", "the announcement should be a whisper")
+check(whispers[1].message == "On my way to Darnassus - meet me there for your if portal.",
+    "both placeholders should be filled, got " .. whispers[1].message)
+
+-- A repeated cast event must not resend it.
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "a repeated start event must not resend")
+check(#whispers == 1, "a repeated start event must not produce a second whisper")
+
+-- A different teleport while one is pending is the mage's own business.
+reset()
+local gralint2 = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", gralint2, "Darnassus", "Teleport: Darnassus")
+check(InviteTrade.announceTravelStart("Teleport: Ironforge") == false, "a different teleport must not announce")
+check(#whispers == 0, "a different teleport must whisper nobody")
+
+-- A failed or interrupted cast clears the intent, so nothing is sent afterwards.
+reset()
+local gralint3 = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", gralint3, "Darnassus", "Teleport: Darnassus")
+InviteTrade.clearTravelAnnouncement() -- what UNIT_SPELLCAST_FAILED / _INTERRUPTED do
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "an interrupted cast must not announce")
+check(#whispers == 0, "an interrupted cast must whisper nobody")
+
+-- A ticket removed between click and cast sends nothing.
+reset()
+local gralint4 = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", gralint4, "Darnassus", "Teleport: Darnassus")
+_G.Events.pendingInvites["Gralint"] = nil
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "a removed ticket must not announce")
+check(#whispers == 0, "a removed ticket must whisper nobody")
+check(InviteTrade.pendingTravelAnnouncement == nil, "a removed ticket should drop the pending announcement")
+
+-- A ticket replaced by a fresh invite for the same player is also stale.
+reset()
+local gralint5 = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", gralint5, "Darnassus", "Teleport: Darnassus")
+newTicket("Gralint", "org") -- they asked again; this is a different record
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "a replaced ticket must not announce")
+check(#whispers == 0, "a replaced ticket must whisper nobody")
+
+-- Clearing for one customer leaves another customer's pending announcement alone.
+reset()
+local keefs = newTicket("Keefs", "org")
+InviteTrade.beginTravelAnnouncement("Keefs", keefs, "Orgrimmar", "Teleport: Orgrimmar")
+InviteTrade.clearTravelAnnouncement("Gralint") -- a different ticket was torn down
+check(InviteTrade.announceTravelStart("Teleport: Orgrimmar") == true,
+    "clearing another customer's ticket must not cancel this announcement")
+check(#whispers == 1, "the surviving announcement should still whisper once")
+
+-- An empty travel message disables the feature entirely.
+reset()
+local gralint6 = newTicket("Gralint", "if")
+Config.Settings.travelMessage = ""
+InviteTrade.beginTravelAnnouncement("Gralint", gralint6, "Darnassus", "Teleport: Darnassus")
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "an empty travel message should send nothing")
+check(#whispers == 0, "an empty travel message must whisper nobody")
+
+-- 6. Arming order, expiry, and clearing only on the matching spell -------------------------------
+
+-- PreClick arms before the secure action casts, so the very next event can be the cast starting.
+-- Nothing may elapse in between for the announcement to work.
+reset()
+local armed = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", armed, "Darnassus", "Teleport: Darnassus")
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == true,
+    "a cast starting in the same instant as the click must still announce")
+check(#whispers == 1, "the immediate start should whisper once")
+
+-- A click that never became a cast expires instead of lying in wait.
+reset()
+local neverCast = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", neverCast, "Darnassus", "Teleport: Darnassus")
+now = now + 30
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "an expired intent must not announce")
+check(#whispers == 0, "an expired intent must whisper nobody")
+check(InviteTrade.pendingTravelAnnouncement == nil, "an expired intent should be dropped")
+
+-- And a manual teleport minutes later must not inherit it.
+reset()
+local abandoned = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", abandoned, "Darnassus", "Teleport: Darnassus")
+now = now + 600
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false,
+    "a manual teleport long after an abandoned click must not announce")
+check(#whispers == 0, "a manual teleport after expiry must whisper nobody")
+
+-- An unrelated spell failing, being interrupted, or succeeding during the teleport must leave the
+-- intent alone: those events carry their own spell, and cancelling on them loses a live trip.
+for _, unrelated in ipairs({"Fireball", "Frost Nova", "Portal: Ironforge"}) do
+    reset()
+    local survives = newTicket("Gralint", "if")
+    InviteTrade.beginTravelAnnouncement("Gralint", survives, "Darnassus", "Teleport: Darnassus")
+
+    check(InviteTrade.clearTravelAnnouncement(nil, unrelated) == false, unrelated .. " must not clear the intent")
+    check(InviteTrade.pendingTravelAnnouncement ~= nil, unrelated .. " must leave the intent armed")
+    check(InviteTrade.announceTravelStart("Teleport: Darnassus") == true,
+        "the teleport should still announce after an unrelated " .. unrelated)
+    check(#whispers == 1, "the surviving intent should whisper once despite " .. unrelated)
+end
+
+-- The matching teleport's own end - however it ended - does clear it.
+for _, ending in ipairs({"success", "failure", "interruption"}) do
+    reset()
+    local ends = newTicket("Gralint", "if")
+    InviteTrade.beginTravelAnnouncement("Gralint", ends, "Darnassus", "Teleport: Darnassus")
+
+    check(InviteTrade.clearTravelAnnouncement(nil, "Teleport: Darnassus") == true,
+        "the matching teleport's " .. ending .. " should clear the intent")
+    check(InviteTrade.pendingTravelAnnouncement == nil, "nothing should stay pending after " .. ending)
+    check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false,
+        "no announcement should follow a cleared " .. ending)
+    check(#whispers == 0, "a cleared " .. ending .. " must whisper nobody")
+end
+
+-- Tokens keep a re-armed intent distinct from the one it replaced.
+reset()
+local first = newTicket("Gralint", "if")
+local firstToken = InviteTrade.beginTravelAnnouncement("Gralint", first, "Darnassus", "Teleport: Darnassus")
+local secondToken = InviteTrade.beginTravelAnnouncement("Gralint", first, "Ironforge", "Teleport: Ironforge")
+
+check(firstToken ~= secondToken, "each arming should get its own token")
+check(InviteTrade.clearTravelAnnouncement(nil, nil, firstToken) == false,
+    "a late clear carrying the old token must not drop the new intent")
+check(InviteTrade.announceTravelStart("Teleport: Ironforge") == true, "the re-armed intent should still announce")
+check(#whispers == 1, "the re-armed intent should whisper once")
+
+-- 7. Expiry is scheduled, not merely checked when something else happens ------------------------
+
+-- A click that never cast should stop being pending on its own, without waiting for another event
+-- to come along and notice.
+reset()
+local abandonedClick = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", abandonedClick, "Darnassus", "Teleport: Darnassus")
+
+check(#scheduled == 1, "arming should schedule an expiry, got " .. #scheduled .. " timers")
+check(scheduled[1].delay == 2, "the expiry should fire after the announcement window, got " .. tostring(scheduled[1].delay))
+check(InviteTrade.pendingTravelAnnouncement ~= nil, "the intent is armed until the timer fires")
+
+scheduled[1].callback()
+
+check(InviteTrade.pendingTravelAnnouncement == nil, "the scheduled expiry should clear its own intent")
+check(InviteTrade.announceTravelStart("Teleport: Darnassus") == false, "an expired intent announces nothing")
+check(#whispers == 0, "an expired intent whispers nobody")
+
+-- The timer belonging to a superseded arming must not take the newer one with it. This is what the
+-- token is for in production, rather than only in tests.
+reset()
+local rearmed = newTicket("Gralint", "if")
+InviteTrade.beginTravelAnnouncement("Gralint", rearmed, "Darnassus", "Teleport: Darnassus")
+InviteTrade.beginTravelAnnouncement("Gralint", rearmed, "Ironforge", "Teleport: Ironforge")
+
+check(#scheduled == 2, "each arming schedules its own expiry")
+
+scheduled[1].callback() -- the first arming's timer, firing after it was superseded
+
+check(InviteTrade.pendingTravelAnnouncement ~= nil, "a superseded timer must not clear the newer intent")
+check(InviteTrade.announceTravelStart("Teleport: Ironforge") == true, "the newer intent should still announce")
+check(#whispers == 1, "the newer intent should whisper once")
+
+-- And the newer arming's own timer still works.
+scheduled[2].callback()
+check(InviteTrade.pendingTravelAnnouncement == nil, "the newer intent's own timer should clear it")
+
 -- ------------------------------------------------------------------------------------------------
 
 if failures > 0 then
     error(string.format("travel state: %d check(s) failed", failures))
 end
 
-print("travel state: unit token resolution, keyed deferrals and stale-update guards all passed")
+print("travel state: unit token resolution, keyed deferrals, stale-update guards and scoped travel announcements all passed")

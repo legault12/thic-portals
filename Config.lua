@@ -32,6 +32,7 @@ local DEFAULT_SETTINGS = {
     inviteMessageWithoutDestination = "[Thic-Portals] Good day! Please specify a destination and I will create a portal for you.",
     tipMessage = "[Thic-Portals] Thank you for your tip, enjoy your journey - safe travels!",
     noTipMessage = "[Thic-Portals] Enjoy your journey and thanks for choosing Thic-Portals. Safe travels!",
+    travelMessage = "[Thic-Portals] On my way - teleporting to %location% now. Please meet me at the portal area.",
 
     commonPhrases = {"wtb mage port", "wtb mage portal", "wtb portal", "wtb port", -- Alliance destinations
     "wtb portal darnassus", "wtb portal darnasus", "wtb portal darna", "wtb portal darn", "wtb darnassus port",
@@ -262,6 +263,9 @@ function Config.initializeSavedVariables()
     end
     if not Config.Settings.disableAFKProtection then
         Config.Settings.disableAFKProtection = DEFAULT_SETTINGS.disableAFKProtection
+    end
+    if not Config.Settings.travelMessage then
+        Config.Settings.travelMessage = DEFAULT_SETTINGS.travelMessage
     end
     if not Config.Settings.FoodKeywords then
         Config.Settings.FoodKeywords = DEFAULT_SETTINGS.FoodKeywords

@@ -294,6 +294,20 @@ local filtered = Utils.rejectCurrentCityCandidates(
 check(keywordsOf(filtered) == "if", "filtering should offer the alternative")
 check(ticket.destination == "sw", "filtering must not mutate the ticket's selected destination")
 
+-- 9. Message placeholders ------------------------------------------------------------------------
+
+check(Utils.replacePlaceholders("meet me at %location%", nil, "Darnassus") == "meet me at Darnassus",
+    "%location% should be filled from the meeting city")
+check(Utils.replacePlaceholders("off to %destination%", "if", "Darnassus") == "off to if",
+    "%destination% should still be the customer's destination")
+check(Utils.replacePlaceholders("%location% then %destination%", "if", "Darnassus") == "Darnassus then if",
+    "both placeholders should resolve independently")
+check(Utils.replacePlaceholders("no tokens here", "if", "Darnassus") == "no tokens here",
+    "a message without placeholders is unchanged")
+check(Utils.replacePlaceholders(nil, "if", "Darnassus") == nil, "a nil message stays nil")
+check(Utils.replacePlaceholders("meet me at %location%", "if") == "meet me at %location%",
+    "an unresolved placeholder is left rather than blanked")
+
 -- ---------------------------------------------------------------------------------------------
 
 if failures > 0 then

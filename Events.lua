@@ -203,6 +203,7 @@ function Events.onEvent(self, event, ...)
                 inviteData.ticketFrame:Hide()
             end
             Events.pendingInvites[sender] = nil
+            InviteTrade.clearTravelAnnouncement(sender)
             Utils.debugPrint(sender .. " has left the party and has been removed from tracking.")
             if not (inviteData and inviteData.hasPaid) and not Config.Settings.disableAFKProtection then
                 handleConsecutiveLeavesWithoutPayment()
@@ -251,6 +252,11 @@ function Events.onEvent(self, event, ...)
         local unit, _, spellID = ...
         if unit == "player" then
             local spellName = GetSpellInfo(spellID)
+
+            -- Only the teleport this intent was armed for ends it; the whisper itself went out at
+            -- the start of the cast, not here.
+            InviteTrade.clearTravelAnnouncement(nil, spellName)
+
             for _, portalName in ipairs(Config.Portals) do
                 if spellName:lower() == portalName:lower() then
                     Utils.debugPrint("Portal to " .. spellName .. " successfully cast!")
@@ -275,6 +281,22 @@ function Events.onEvent(self, event, ...)
                     break
                 end
             end
+        end
+
+    elseif event == "UNIT_SPELLCAST_START" then
+        local unit, _, spellID = ...
+        if unit == "player" then
+            -- Announce as soon as the cast is genuinely under way. A teleport takes about ten
+            -- seconds and that is exactly the wait during which a customer gives up and leaves.
+            InviteTrade.announceTravelStart(GetSpellInfo(spellID))
+        end
+
+    elseif event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
+        local unit, _, spellID = ...
+        if unit == "player" then
+            -- Only when it is the teleport we armed. Any other spell failing during the cast is
+            -- unrelated and must not cancel the announcement.
+            InviteTrade.clearTravelAnnouncement(nil, GetSpellInfo(spellID))
         end
 
     elseif event == "UI_INFO_MESSAGE" then

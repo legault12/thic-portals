@@ -708,7 +708,7 @@ end
 -- By the time a deferred update runs the ticket may have paged to another customer, so it
 -- re-checks the sender before touching anything. Passing no spell clears the action as well as
 -- hiding, so nothing stale survives to be cast if the button is shown again.
-local function applyTravelState(sender, teleportSpell, zoneName)
+local function applyTravelState(sender, teleportSpell, zoneName, city)
     UI.runWhenOutOfCombat("travelButton", function()
         local ticketFrame = UI.ticketFrame
 
@@ -727,7 +727,11 @@ local function applyTravelState(sender, teleportSpell, zoneName)
             travelButton:SetAttribute("type", nil)
             travelButton:SetAttribute("spell", nil)
             travelButton:SetScript("OnEnter", nil)
+            travelButton:SetScript("PreClick", nil)
             travelButton:Hide()
+
+            -- The trip this ticket was going to announce is no longer on offer.
+            InviteTrade.clearTravelAnnouncement(sender)
             return
         end
 
@@ -746,6 +750,19 @@ local function applyTravelState(sender, teleportSpell, zoneName)
             GameTooltip:AddLine((sender or "The customer") .. " is in " .. (zoneName or "another zone") ..
                                     ". Click to travel to them.", 1, 1, 1, true)
             GameTooltip:Show()
+        end)
+
+        -- PreClick, not PostClick: the secure action starts the cast on click, and
+        -- UNIT_SPELLCAST_START can dispatch before a PostClick handler ever runs - the
+        -- announcement would then arrive too late and miss its own cast.
+        travelButton:SetScript("PreClick", function()
+            local inviteData = Events.pendingInvites[sender]
+
+            if not inviteData then
+                return
+            end
+
+            InviteTrade.beginTravelAnnouncement(sender, inviteData, city, teleportSpell)
         end)
 
         travelButton:Show()
@@ -792,7 +809,7 @@ function UI.updateLocationLine(sender, distanceLabel)
 
     local city = Utils.resolveCityFromZoneName(customerZone)
 
-    applyTravelState(sender, city and Utils.getKnownTeleportSpell(city) or nil, customerZone)
+    applyTravelState(sender, city and Utils.getKnownTeleportSpell(city) or nil, customerZone, city)
 end
 
 
@@ -1949,7 +1966,17 @@ function UI.createOptionsPanel()
         Utils.print("No tip message updated.")
     end)
     messageConfigGroup:AddChild(noTipMessageGroup)
+    messageConfigGroup:AddChild(smallVerticalGap)
 
+    -- Travel Message: whispered when the teleport to the customer's city starts casting, so they
+    -- hear it at the top of the cast rather than ten seconds later. %location% is where we are
+    -- heading, %destination% is still where they are going.
+    local travelMessageGroup = addMessageMultiLineEditBox("Travel Message (%location%):", Config.Settings.travelMessage,
+        function(text)
+            Config.Settings.travelMessage = text
+            Utils.print("Travel message updated.")
+        end)
+    messageConfigGroup:AddChild(travelMessageGroup)
     messageConfigGroup:AddChild(largeVerticalGap)
 
     -- Creating Keyword Sections

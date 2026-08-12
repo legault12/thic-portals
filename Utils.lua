@@ -205,8 +205,11 @@ function Utils.findRequestedDestination(message, keywordList)
     return best.position, best.keyword, bestScore < 0
 end
 
--- Function to replace placeholders in messages with actual values
-function Utils.replacePlaceholders(message, destination)
+-- Function to replace placeholders in messages with actual values.
+--
+-- %destination% is where the customer is going; %location% is where we are going to meet them,
+-- which is a different city and only meaningful for the travel message.
+function Utils.replacePlaceholders(message, destination, location)
     if not message then
         return message
     end
@@ -214,6 +217,10 @@ function Utils.replacePlaceholders(message, destination)
     -- Replace %destination% with the actual destination
     if destination then
         message = string.gsub(message, "%%destination%%", destination)
+    end
+
+    if location then
+        message = string.gsub(message, "%%location%%", location)
     end
 
     return message
