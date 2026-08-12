@@ -569,6 +569,28 @@ function Utils.getMatchingPortal(destination)
     }
 end
 
+-- Whether a keyword can actually produce a portal: a shipped alias, or one the user has configured
+-- that still resolves. Membership is the real gate - the heuristic fallback finds a "best" match
+-- for almost any text, so matching alone would accept arbitrary input and build a locked, unusable
+-- ticket out of a typo.
+function Utils.isUsableDestination(keyword)
+    if not keyword or keyword == "" then
+        return false
+    end
+
+    local known = Utils.resolveCanonicalDestination(keyword) ~= nil
+
+    if not known and Config.Settings and Config.Settings.DestinationKeywords then
+        known = Utils.keywordInTable(keyword, Config.Settings.DestinationKeywords)
+    end
+
+    if not known then
+        return false
+    end
+
+    return Utils.getMatchingPortal(keyword).matched
+end
+
 -- Collapse keywords that are aliases for the same city, so "port to if from sw, im in stormwind"
 -- offers two chips rather than three. Only collapses when BOTH keywords resolve through the
 -- explicit map: the heuristic is not trustworthy enough to merge on, and merging on it would hide

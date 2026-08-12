@@ -8,15 +8,31 @@ jobs:
   lua:
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 5.1 is the compatibility authority: the addon runs in WoW's Lua 5.1
+          # environment, and a newer interpreter accepts syntax and behaviour
+          # that would fail in the client.
+          - lua: lua5.1
+            luac: luac5.1
+          - lua: lua5.4
+            luac: luac5.4
+
+    name: ${{ matrix.lua }}
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Lua
         run: |
           sudo apt-get update
-          sudo apt-get install -y lua5.4
+          sudo apt-get install -y ${{ matrix.lua }}
 
       - name: Syntax check and test suites
         run: ./tests/run.sh
         env:
-          LUA: lua5.4
+          LUA: ${{ matrix.lua }}
+          # Falls back to loadfile if the distribution ships no matching luac.
+          LUAC: ${{ matrix.luac }}

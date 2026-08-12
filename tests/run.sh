@@ -39,6 +39,10 @@ fi
 # where luac sits next to lua.
 if [ "${LUAC:-}" = "none" ]; then
     LUAC=""
+elif [ -n "${LUAC:-}" ]; then
+    # A named luac that is not installed degrades to loadfile rather than failing:
+    # distributions do not agree on whether luac ships alongside the interpreter.
+    command -v "$LUAC" >/dev/null 2>&1 || LUAC=""
 elif [ -z "${LUAC:-}" ]; then
     for candidate in luac luac5.4 luac5.3 luac5.5; do
         if command -v "$candidate" >/dev/null 2>&1; then

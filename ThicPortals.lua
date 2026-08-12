@@ -264,11 +264,20 @@ function handleCommand(msg)
     elseif command == "add" then
         local name, destination = rest:match("^(%S+)%s*(.-)$")
 
+        local shortName = name and (name:match("^([^%-]+)") or name)
+        local alreadyTracked = shortName and findTicket(shortName)
+
         if not name or name == "" then
             Utils.print("Usage: /Tp add [player] [destination] - track a customer the addon missed")
+        elseif alreadyTracked then
+            -- Overwriting would silently discard payment, lock, travel and announcement state.
+            Utils.print(alreadyTracked .. " is already tracked. Use /Tp destination to change where " ..
+                            "they are going, or /Tp remove to drop the ticket first.")
+        elseif destination ~= "" and not Utils.isUsableDestination(destination) then
+            Utils.print("'" .. destination .. "' is not a destination this addon can resolve. Add it " ..
+                            "under Destination Keywords in the options panel, or leave it off and set " ..
+                            "it later.")
         else
-            local shortName = name:match("^([^%-]+)") or name
-
             InviteTrade.createPendingInvite(shortName, nil, name, "(added by hand)",
                 destination ~= "" and destination or nil)
 
@@ -307,6 +316,9 @@ function handleCommand(msg)
             Utils.print("Usage: /Tp destination [player] [destination]")
         elseif not sender then
             Utils.print("No ticket found for '" .. name .. "'. Try /Tp list.")
+        elseif not Utils.isUsableDestination(destination) then
+            Utils.print("'" .. destination .. "' is not a destination this addon can resolve. Add it " ..
+                            "under Destination Keywords in the options panel first.")
         else
             inviteData.destination = destination
             -- A deliberate choice, so later messages must not overwrite it.
