@@ -235,9 +235,7 @@ function Events.onEvent(self, event, ...)
         -- Reset the counter when a trade is initiated
         Events.resetConsecutiveLeavesWithoutPaymentCounter()
 
-        -- Store the name of the player when the trade window is opened
-        Events.storeCurrentTrader()
-        Events.captureTradeContents()
+        Events.beginTrade()
 
     elseif event == "TRADE_TARGET_ITEM_CHANGED" or event == "TRADE_PLAYER_ITEM_CHANGED" then
         Events.captureTradeContents()
@@ -245,9 +243,7 @@ function Events.onEvent(self, event, ...)
     elseif event == "TRADE_CLOSED" then
         printEvent(event)
 
-        -- A trade that ended without completing must not leave its contents to be read as the next
-        -- one's tip.
-        Events.forgetTrade()
+        Events.scheduleTradeCleanup()
 
     elseif event == "TRADE_MONEY_CHANGED" then
         printEvent(event)
@@ -394,12 +390,49 @@ function Events.updateTradeMoney()
     Events.captureTradeContents()
 end
 
--- Clear everything we know about the trade in progress.
-function Events.forgetTrade()
+-- Each trade gets an id, so cleanup scheduled for one cannot wipe another.
+local tradeGenerationCounter = 0
+
+Events.tradeGeneration = 0
+
+function Events.beginTrade()
+    tradeGenerationCounter = tradeGenerationCounter + 1
+    Events.tradeGeneration = tradeGenerationCounter
+
+    Events.storeCurrentTrader()
+    Events.captureTradeContents()
+end
+
+-- Clear what we know about a trade, but only if it is still the one being tracked.
+--
+-- Passing no generation clears whatever is current, which is what a completed trade wants.
+function Events.forgetTrade(generation)
+    if generation and generation ~= Events.tradeGeneration then
+        Utils.debugPrint("Ignoring cleanup for a trade that is no longer current.")
+        return false
+    end
+
+    Events.tradeGeneration = 0
     Config.currentTraderName = nil
     Config.currentTraderRealm = nil
     Config.currentTraderMoney = nil
     Config.currentTraderItems = nil
+
+    return true
+end
+
+-- Tidy up after the trade window closes, a frame later.
+--
+-- The window closing and the trade completing are reported separately, and the order is not
+-- guaranteed. Clearing immediately would erase the trader and the snapshot before
+-- ERR_TRADE_COMPLETE could be handled, so a completed trade would pay nobody and count nothing.
+-- Deferring by a frame lets the completion, which clears the generation itself, get there first.
+function Events.scheduleTradeCleanup()
+    local closing = Events.tradeGeneration
+
+    C_Timer.After(0, function()
+        Events.forgetTrade(closing)
+    end)
 end
 
 -- Function to handle trade completion

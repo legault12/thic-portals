@@ -68,10 +68,22 @@ end
 _G.UnitFactionGroup = function()
     return "Alliance"
 end
+local timers = {}
+
 _G.C_Timer = {
-    After = function()
+    After = function(delay, callback)
+        timers[#timers + 1] = {
+            delay = delay,
+            callback = callback
+        }
     end
 }
+_G.ERR_TRADE_COMPLETE = "Trade complete."
+_G.UnitInParty = function()
+    return true
+end
+_G.FlashClientIcon = function()
+end
 _G.UI = {
     toggleAddonEnabledState = function()
     end,
@@ -147,6 +159,15 @@ local function reset(customerMoney, customerItems)
     Config.currentTraderName = "Gralint"
     Config.currentTraderMoney = nil
     Config.currentTraderItems = nil
+    timers = {}
+end
+
+local function fireTimers()
+    local pending = timers
+    timers = {}
+    for _, timer in ipairs(pending) do
+        timer.callback()
+    end
 end
 
 -- 1. Capturing what is on the table ---------------------------------------------------------------
@@ -295,6 +316,89 @@ ok, err = pcall(InviteTrade.checkTradeTip)
 check(ok, "an untracked trader must not error, got: " .. tostring(err))
 check(#whispers == 0, "an untracked trader should not be whispered")
 
+-- 7. Event order around closing and completing -----------------------------------------------------
+
+-- The window closing and the trade completing are separate events with no guaranteed order.
+-- Clearing on close used to be immediate, which meant that if close landed first the completion
+-- found no trader and the customer was neither thanked nor counted.
+Config.Settings.addonEnabled = true
+Config.Settings.consecutiveLeavesWithoutPayment = 0
+
+local function openTrade(money, items)
+    reset(money, items)
+    Config.currentTraderName = nil
+    Events.onEvent(nil, "TRADE_SHOW")
+    Events.onEvent(nil, "TRADE_ACCEPT_UPDATE")
+end
+
+-- Order A: completion first, then the window closes.
+openTrade(30000, {})
+Events.onEvent(nil, "UI_INFO_MESSAGE", 1, ERR_TRADE_COMPLETE)
+check(whispered("thanks!"), "completion first should thank the customer")
+check(Config.Settings.totalGold == 30000, "completion first should count the gold")
+-- Completion consumes the trade. Nothing is in progress afterwards, so anything still holding that
+-- generation is answering about a trade that is over.
+check(Events.tradeGeneration == 0, "completion should consume the trade generation, got " ..
+    tostring(Events.tradeGeneration))
+
+Events.onEvent(nil, "TRADE_CLOSED")
+fireTimers()
+check(Config.currentTraderName == nil, "the deferred cleanup should leave nothing behind")
+
+-- Order B: the window closes first, completion arrives in the same frame.
+openTrade(30000, {})
+Events.onEvent(nil, "TRADE_CLOSED")
+check(Config.currentTraderName == "Gralint", "closing must not erase the trader before completion")
+check(Config.currentTraderMoney == 30000, "closing must not erase the snapshot before completion")
+
+Events.onEvent(nil, "UI_INFO_MESSAGE", 1, ERR_TRADE_COMPLETE)
+check(whispered("thanks!"), "close-first order should still thank the customer")
+check(Config.Settings.totalGold == 30000, "close-first order should still count the gold")
+
+fireTimers()
+check(Config.currentTraderName == nil, "cleanup still runs afterwards")
+
+-- Same again for an item-only tip, since that is the path with no coin to fall back on.
+openTrade(0, {{
+    name = "Rune of Portals",
+    quantity = 20
+}})
+Events.onEvent(nil, "TRADE_CLOSED")
+Events.onEvent(nil, "UI_INFO_MESSAGE", 1, ERR_TRADE_COMPLETE)
+check(whispered("thanks!"), "close-first order should thank an item tipper")
+check(Config.Settings.itemTipsReceived == 1, "close-first order should count the item tip")
+fireTimers()
+
+-- A cancelled trade is cleaned up: closed, never completed.
+openTrade(30000, {})
+Events.onEvent(nil, "TRADE_CLOSED")
+fireTimers()
+check(Config.currentTraderName == nil, "a cancelled trade should be forgotten")
+check(Config.currentTraderMoney == nil, "a cancelled trade should drop its snapshot")
+check(Config.Settings.totalGold == 0, "a cancelled trade must not count as a tip")
+
+-- Cleanup scheduled for an old trade must not erase a newer one.
+openTrade(30000, {})
+Events.onEvent(nil, "TRADE_CLOSED") -- schedules cleanup for this trade
+local staleCleanup = timers
+timers = {}
+
+Events.onEvent(nil, "TRADE_SHOW") -- a new trade starts before the old cleanup runs
+tradeMoney = 77000
+Events.onEvent(nil, "TRADE_ACCEPT_UPDATE")
+
+for _, timer in ipairs(staleCleanup) do
+    timer.callback()
+end
+
+check(Config.currentTraderName == "Gralint", "a stale cleanup must not erase the new trade's trader")
+check(Config.currentTraderMoney == 77000, "a stale cleanup must not erase the new trade's snapshot")
+
+-- The new trade's own cleanup still works.
+Events.onEvent(nil, "TRADE_CLOSED")
+fireTimers()
+check(Config.currentTraderName == nil, "the current trade's own cleanup should still run")
+
 -- ------------------------------------------------------------------------------------------------
 
 _G.print = realPrint
@@ -303,4 +407,4 @@ if failures > 0 then
     error(string.format("trade: %d check(s) failed", failures))
 end
 
-print("trade: capture, gold tips, item tips, no-tip, nil safety and flourishes all passed")
+print("trade: capture, tips, nil safety, flourishes and close/complete ordering all passed")
