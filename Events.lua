@@ -237,16 +237,27 @@ function Events.onEvent(self, event, ...)
 
         -- Store the name of the player when the trade window is opened
         Events.storeCurrentTrader()
+        Events.captureTradeContents()
+
+    elseif event == "TRADE_TARGET_ITEM_CHANGED" or event == "TRADE_PLAYER_ITEM_CHANGED" then
+        Events.captureTradeContents()
+
+    elseif event == "TRADE_CLOSED" then
+        printEvent(event)
+
+        -- A trade that ended without completing must not leave its contents to be read as the next
+        -- one's tip.
+        Events.forgetTrade()
 
     elseif event == "TRADE_MONEY_CHANGED" then
         printEvent(event)
 
-        Events.updateTradeMoney()
+        Events.captureTradeContents()
 
     elseif event == "TRADE_ACCEPT_UPDATE" then
         printEvent(event)
 
-        Events.updateTradeMoney()
+        Events.captureTradeContents()
 
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
@@ -349,10 +360,46 @@ function Events.storeCurrentTrader()
     Utils.debugPrint("Current trader: " .. (Config.currentTraderName or "Unknown"))
 end
 
--- Function to update trade money
+-- Snapshot what the customer has put in the trade window.
+--
+-- Taken while the window is open rather than read at completion: by the time ERR_TRADE_COMPLETE
+-- arrives the trade is over and its contents are no longer there to inspect. Money already worked
+-- this way; items now do too, and the snapshot refreshes on every change so it reflects whatever
+-- was on the table when the trade closed.
+function Events.captureTradeContents()
+    Config.currentTraderMoney = tonumber(GetTargetTradeMoney and GetTargetTradeMoney()) or 0
+
+    local items = {}
+
+    if GetTradeTargetItemInfo then
+        for slot = 1, (MAX_TRADE_ITEMS or 6) do
+            local name, _, quantity = GetTradeTargetItemInfo(slot)
+
+            if name then
+                items[#items + 1] = {
+                    name = name,
+                    quantity = quantity or 1
+                }
+            end
+        end
+    end
+
+    Config.currentTraderItems = items
+
+    Utils.debugPrint("Trade holds " .. Config.currentTraderMoney .. "c and " .. #items .. " item(s).")
+end
+
+-- Kept as the old name so nothing that called it breaks.
 function Events.updateTradeMoney()
-    Config.currentTraderMoney = GetTargetTradeMoney()
-    Utils.debugPrint("Current trade money: " .. (Config.currentTraderMoney or "Unknown"))
+    Events.captureTradeContents()
+end
+
+-- Clear everything we know about the trade in progress.
+function Events.forgetTrade()
+    Config.currentTraderName = nil
+    Config.currentTraderRealm = nil
+    Config.currentTraderMoney = nil
+    Config.currentTraderItems = nil
 end
 
 -- Function to handle trade completion
@@ -371,9 +418,7 @@ function Events.handleTradeComplete()
             end
 
             Events.pendingInvites[Config.currentTraderName].hasPaid = true
-            Config.currentTraderName = nil
-            Config.currentTraderMoney = nil
-            Config.currentTraderRealm = nil
+            Events.forgetTrade()
         else
             Utils.debugPrint("No pending invite found for current trader, ignoring transaction.")
         end

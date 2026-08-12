@@ -334,6 +334,10 @@ function Utils.printGoldInformation()
     Utils.print(string.format("Total gold earned: %dg %ds %dc",
         math.floor(Config.Settings.totalGold / 10000), math.floor((Config.Settings.totalGold % 10000) / 100),
         Config.Settings.totalGold % 100))
+    if (Config.Settings.itemTipsReceived or 0) > 0 then
+        Utils.print(string.format("Tips paid in items: %d", Config.Settings.itemTipsReceived))
+    end
+
     Utils.print(string.format("Gold earned today: %dg %ds %dc",
         math.floor(Config.Settings.dailyGold / 10000), math.floor((Config.Settings.dailyGold % 10000) / 100),
         Config.Settings.dailyGold % 100))
@@ -352,6 +356,12 @@ end
 -- Function to increment trades completed
 function Utils.incrementTradesCompleted()
     Config.Settings.totalTradesCompleted = Config.Settings.totalTradesCompleted + 1
+end
+
+-- Item tips are counted, never valued. Guessing what a stack of mats is worth would quietly
+-- corrupt the gold totals, so they are tracked as their own kind of transaction.
+function Utils.incrementItemTips()
+    Config.Settings.itemTipsReceived = (Config.Settings.itemTipsReceived or 0) + 1
 end
 
 -- Function to check if the player is within range using the UnitPosition API

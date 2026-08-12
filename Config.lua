@@ -10,6 +10,7 @@ local DEFAULT_SETTINGS = {
     totalGold = 0,
     dailyGold = 0,
     totalTradesCompleted = 0,
+    itemTipsReceived = 0,
     lastUpdateDate = nil,
 
     BanList = {},
@@ -261,6 +262,9 @@ function Config.initializeSavedVariables()
     end
     if not Config.Settings.disableAFKProtection then
         Config.Settings.disableAFKProtection = DEFAULT_SETTINGS.disableAFKProtection
+    end
+    if not Config.Settings.itemTipsReceived then
+        Config.Settings.itemTipsReceived = 0
     end
     if not Config.Settings.travelMessage then
         Config.Settings.travelMessage = DEFAULT_SETTINGS.travelMessage

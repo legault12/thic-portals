@@ -603,51 +603,73 @@ function InviteTrade.watchForPlayerProximity(sender)
 end
 
 -- Function to check if there was a tip in the trade
+-- Did the customer pay, and record it.
+--
+-- Returns whether anything was received, which decides between the thank-you and no-tip whispers.
+-- An item counts: somebody who hands over a stack of runes has paid, and telling them they did not
+-- is the rudest thing this addon can do. What an item is worth is not guessed at - there is no
+-- reliable valuation here - so item tips are counted as their own kind of transaction rather than
+-- folded into the gold total.
 function InviteTrade.checkTradeTip()
-    Utils.print("Checking trade tip...");
+    -- Nil-safe: the money snapshot is missing entirely if the trade completed without an
+    -- accept-update, which used to make this arithmetic error out mid-trade.
+    local copper = tonumber(Config.currentTraderMoney) or 0
+    local gold = math.floor(copper / 10000)
+    local silver = math.floor((copper % 10000) / 100)
+    local remainingCopper = copper % 100
 
-    local copper = tonumber(Config.currentTraderMoney);
-    local silver = math.floor((copper % 10000) / 100);
-    local gold = math.floor(copper / 10000);
-    local remainingCopper = copper % 100;
+    local items = Config.currentTraderItems or {}
+    local paidGold = copper > 0
+    local paidItems = #items > 0
 
-    Utils.print(string.format("Received %dg %ds %dc from the trade.", gold, silver, remainingCopper));
+    Utils.debugPrint("Checking trade tip...")
 
-    if gold > 0 or silver > 0 or remainingCopper > 0 then
-        Utils.incrementTradesCompleted();
-        Utils.resetDailyGoldIfNeeded();
-        Utils.addTipToRollingTotal(gold, silver, remainingCopper);
+    if not paidGold and not paidItems then
+        return false
+    end
 
-        -- If the gold amount is higher than 8g, send a custom message via whisper saying "<3"
+    Utils.incrementTradesCompleted()
+    Utils.resetDailyGoldIfNeeded()
+
+    if paidGold then
+        Utils.print(string.format("Received %dg %ds %dc from the trade.", gold, silver, remainingCopper))
+        Utils.addTipToRollingTotal(gold, silver, remainingCopper)
+    end
+
+    if paidItems then
+        local described = {}
+
+        for _, item in ipairs(items) do
+            described[#described + 1] = (item.quantity and item.quantity > 1) and
+                                            (item.quantity .. "x " .. item.name) or item.name
+        end
+
+        Utils.incrementItemTips()
+        Utils.print("Received " .. table.concat(described, ", ") .. " from the trade.")
+    end
+
+    local fullName = Events.pendingInvites[Config.currentTraderName] and
+                         Events.pendingInvites[Config.currentTraderName].fullName
+
+    -- The flourishes are all about the amount of coin, so they only apply to a gold tip.
+    if paidGold and fullName then
         if gold > 8 then
-            SendChatMessage("<3", "WHISPER", nil, Events.pendingInvites[Config.currentTraderName].fullName)
-
-            -- Send an emote "thank" to the player after they have accepted the trade
+            SendChatMessage("<3", "WHISPER", nil, fullName)
             DoEmote("thank", Config.currentTraderName)
         end
 
-        -- If the gold amount is higher than 8g, send a custom message via whisper saying "<3"
         if gold == 69 or silver == 69 or remainingCopper == 69 then
-            SendChatMessage("Nice (⌐□_□)", "WHISPER", nil,
-                Events.pendingInvites[Config.currentTraderName].fullName)
-
-            -- Send an emote "flirt" to the player after they sent a 69 tip
+            SendChatMessage("Nice (\226\140\144\226\150\161_\226\150\161)", "WHISPER", nil, fullName)
             DoEmote("flirt", Config.currentTraderName)
         end
 
-        -- If the gold amount is higher than 8g, send a custom message via whisper saying "<3"
         if gold == 4 and silver == 20 then
-            SendChatMessage("420 blaze it (⌐□_□)-~", "WHISPER", nil,
-                Events.pendingInvites[Config.currentTraderName].fullName)
-
-            -- Send an emote "silly" to the player after they sent a 420 tip
+            SendChatMessage("420 blaze it (\226\140\144\226\150\161_\226\150\161)-~", "WHISPER", nil, fullName)
             DoEmote("silly", Config.currentTraderName)
         end
-
-        return true
-    else
-        return false
     end
+
+    return true
 end
 
 -- Function to also send mana users a message with water and food stockpiles and none mana users food stock
