@@ -291,6 +291,7 @@ function Utils.updateDistanceLabel(sender, distanceLabel)
             -- One owner for this line: it shows a distance while the customer is in the same zone
             -- and where they are when they are not, and the travel button follows the same call.
             UI.updateLocationLine(sender, distanceLabel)
+            UI.updateWaitLabel(sender)
         else
             distanceLabel:SetText("Distance: N/A")
             UI.hideTravelButton()
@@ -567,6 +568,72 @@ function Utils.getMatchingPortal(destination)
         locationName = canonical,
         canonical = resolvedByMap and canonical or nil
     }
+end
+
+-- How long a customer has been waiting, in a form that fits a narrow ticket.
+function Utils.formatWaitTime(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+
+    if seconds < 60 then
+        return string.format("%ds", seconds)
+    end
+
+    if seconds < 3600 then
+        return string.format("%dm %02ds", math.floor(seconds / 60), seconds % 60)
+    end
+
+    return string.format("%dh %02dm", math.floor(seconds / 3600), math.floor((seconds % 3600) / 60))
+end
+
+-- Tracked customers in the order they asked, oldest first.
+--
+-- The queue used to be sorted alphabetically, which meant service order was decided by name and
+-- reshuffled as customers came and went. Arrival order is what a queue means, and it is also more
+-- stable: a new ticket appends at the end instead of landing in the middle.
+--
+-- Ties break on name so the order is deterministic when two requests land in the same second.
+function Utils.orderTicketsByArrival(pendingInvites, joinedOnly)
+    local ordered = {}
+
+    for sender, inviteData in pairs(pendingInvites or {}) do
+        if not joinedOnly or inviteData.hasJoined then
+            ordered[#ordered + 1] = {
+                sender = sender,
+                timestamp = inviteData.timestamp or 0
+            }
+        end
+    end
+
+    table.sort(ordered, function(a, b)
+        if a.timestamp ~= b.timestamp then
+            return a.timestamp < b.timestamp
+        end
+
+        return a.sender < b.sender
+    end)
+
+    local senders = {}
+
+    for index, entry in ipairs(ordered) do
+        senders[index] = entry.sender
+    end
+
+    return senders
+end
+
+-- Where a sender sits in an ordered ticket list, or nil if they are no longer in it.
+function Utils.indexOfTicket(ticketList, sender)
+    if not ticketList or not sender then
+        return nil
+    end
+
+    for index, candidate in ipairs(ticketList) do
+        if candidate == sender then
+            return index
+        end
+    end
+
+    return nil
 end
 
 -- Whether a keyword can actually produce a portal: a shipped alias, or one the user has configured

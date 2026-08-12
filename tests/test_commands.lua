@@ -309,6 +309,97 @@ Events.pendingInvites["Gralint"].travelled = true
 run("list")
 check(said("complete"), "a travelled ticket should read as complete")
 
+-- 8b. Queue ordering ------------------------------------------------------------------------------
+
+-- Oldest request first, regardless of name or hash order. Alphabetical ordering used to decide
+-- service order, and pairs() left /Tp list in whatever order the table felt like.
+reset()
+clock = 1000
+run("add Zeta if")
+clock = 1010
+run("add Alpha if")
+clock = 1020
+run("add Mid if")
+
+local ordered = Utils.orderTicketsByArrival(Events.pendingInvites, false)
+check(table.concat(ordered, ",") == "Zeta,Alpha,Mid",
+    "tickets should be ordered oldest first, got " .. table.concat(ordered, ","))
+
+-- Only joined customers get a ticket in the window.
+Events.pendingInvites["Alpha"].hasJoined = true
+Events.pendingInvites["Mid"].hasJoined = true
+check(table.concat(Utils.orderTicketsByArrival(Events.pendingInvites, true), ",") == "Alpha,Mid",
+    "the window queue should only contain joined customers")
+
+-- Same-second arrivals order deterministically rather than by hash.
+reset()
+clock = 2000
+run("add Yolanda if")
+run("add Bert if")
+run("add Malcolm if")
+check(table.concat(Utils.orderTicketsByArrival(Events.pendingInvites, false), ",") == "Bert,Malcolm,Yolanda",
+    "ties should break on name so the queue is stable")
+
+check(#Utils.orderTicketsByArrival({}, false) == 0, "an empty queue orders to nothing")
+check(#Utils.orderTicketsByArrival(nil, false) == 0, "a nil queue orders to nothing")
+
+-- A ticket with no timestamp sorts first rather than erroring.
+local mixed = {
+    Old = {
+        timestamp = 5
+    },
+    Untimed = {}
+}
+check(table.concat(Utils.orderTicketsByArrival(mixed, false), ",") == "Untimed,Old",
+    "a ticket without a timestamp must not break ordering")
+
+-- The list output follows the same order.
+reset()
+clock = 3000
+run("add Zeta if")
+clock = 3060
+run("add Alpha if")
+run("list")
+
+local zetaLine, alphaLine
+for index, line in ipairs(output) do
+    if line:find("Zeta", 1, true) then
+        zetaLine = index
+    end
+    if line:find("Alpha", 1, true) then
+        alphaLine = index
+    end
+end
+check(zetaLine and alphaLine and zetaLine < alphaLine, "/Tp list should print the oldest ticket first")
+
+-- The displayed ticket is followed by name, not by position, so a queue that reorders underneath
+-- cannot page the user onto somebody else mid-click.
+local queue = {"Bert", "Malcolm", "Yolanda"}
+check(Utils.indexOfTicket(queue, "Malcolm") == 2, "a present sender should be found")
+check(Utils.indexOfTicket(queue, "Bert") == 1, "the first sender should be found")
+check(Utils.indexOfTicket(queue, "Gone") == nil, "a departed sender should not be found")
+check(Utils.indexOfTicket({}, "Bert") == nil, "an empty queue finds nobody")
+check(Utils.indexOfTicket(nil, "Bert") == nil, "a nil queue finds nobody")
+check(Utils.indexOfTicket(queue, nil) == nil, "a nil sender finds nothing")
+
+-- After the ticket ahead of them leaves, the customer being handled keeps their position.
+local before = {"Bert", "Malcolm", "Yolanda"}
+local after = {"Malcolm", "Yolanda"}
+check(Utils.indexOfTicket(before, "Malcolm") == 2 and Utils.indexOfTicket(after, "Malcolm") == 1,
+    "following by name should track the customer across a reorder")
+
+-- 8c. Wait formatting ------------------------------------------------------------------------------
+
+check(Utils.formatWaitTime(0) == "0s", "zero reads as seconds")
+check(Utils.formatWaitTime(47) == "47s", "under a minute reads as seconds")
+check(Utils.formatWaitTime(60) == "1m 00s", "a minute reads as minutes and seconds")
+check(Utils.formatWaitTime(139) == "2m 19s", "two minutes nineteen, got " .. Utils.formatWaitTime(139))
+check(Utils.formatWaitTime(3599) == "59m 59s", "just under an hour still reads as minutes")
+check(Utils.formatWaitTime(3600) == "1h 00m", "an hour switches to hours and minutes")
+check(Utils.formatWaitTime(7565) == "2h 06m", "long waits read as hours, got " .. Utils.formatWaitTime(7565))
+check(Utils.formatWaitTime(-5) == "0s", "a negative wait clamps to zero")
+check(Utils.formatWaitTime(nil) == "0s", "a missing wait reads as zero")
+
 -- 9. Usage messages --------------------------------------------------------------------------------
 
 run("add")
@@ -328,4 +419,4 @@ if failures > 0 then
     error(string.format("commands: %d check(s) failed", failures))
 end
 
-print("commands: add, remove, destination, list, validation and usage all passed")
+print("commands: add, remove, destination, list, ordering, wait formatting and validation all passed")

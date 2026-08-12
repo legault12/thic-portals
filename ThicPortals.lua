@@ -244,15 +244,16 @@ function handleCommand(msg)
             printParse(rest)
         end
     elseif command == "list" then
-        local count = 0
+        -- Oldest first, the same order the ticket window pages through.
+        local ordered = Utils.orderTicketsByArrival(Events.pendingInvites, false)
+        local count = #ordered
 
-        for sender, inviteData in pairs(Events.pendingInvites) do
-            count = count + 1
-
+        for _, sender in ipairs(ordered) do
+            local inviteData = Events.pendingInvites[sender]
             local waited = inviteData.timestamp and (time() - inviteData.timestamp) or 0
 
-            print(string.format("  %-14s %-10s %-9s %dm %02ds%s", sender, inviteData.destination or "-",
-                describeTicketState(inviteData), math.floor(waited / 60), waited % 60,
+            print(string.format("  %-14s %-10s %-9s %8s%s", sender, inviteData.destination or "-",
+                describeTicketState(inviteData), Utils.formatWaitTime(waited),
                 inviteData.destinationLocked and "  (locked)" or ""))
         end
 

@@ -769,6 +769,25 @@ local function applyTravelState(sender, teleportSpell, zoneName, city)
     end)
 end
 
+-- Refresh the waiting time on the displayed ticket. Called on every ticket refresh and once a
+-- second by the same ticker that drives the location line.
+function UI.updateWaitLabel(sender)
+    local ticketFrame = UI.ticketFrame
+
+    if not ticketFrame or not ticketFrame.waitValue then
+        return
+    end
+
+    local inviteData = Events.pendingInvites[sender]
+
+    if not inviteData or not inviteData.timestamp then
+        ticketFrame.waitValue:SetText("")
+        return
+    end
+
+    ticketFrame.waitValue:SetText(Utils.formatWaitTime(time() - inviteData.timestamp))
+end
+
 function UI.hideTravelButton()
     -- No sender: unconditional, for when the customer has gone entirely.
     applyTravelState(nil, nil, nil)
@@ -1017,18 +1036,21 @@ end
 
 -- Helper to update ticketList from pendingInvites
 function UI.updateTicketList()
-    UI.ticketList = {}
-
-    for sender, inviteData in pairs(Events.pendingInvites) do
-        -- Only track tickets for users who have joined the party
-        if inviteData.hasJoined then
-            table.insert(UI.ticketList, sender)
-        end
-    end
-
-    table.sort(UI.ticketList) -- Optional: sort alphabetically
+    -- Oldest request first. Only customers who have joined the party get a ticket.
+    UI.ticketList = Utils.orderTicketsByArrival(Events.pendingInvites, true)
 
     UI.totalTickets = #UI.ticketList
+
+    -- Follow the customer being handled rather than the position they happened to occupy: the queue
+    -- reorders underneath as tickets come and go, and paging out from under the user mid-click is
+    -- how you cast the wrong portal.
+    local displayedSender = UI.ticketFrame and UI.ticketFrame.currentSender
+
+    local displayedIndex = Utils.indexOfTicket(UI.ticketList, displayedSender)
+
+    if displayedIndex then
+        UI.currentTicketIndex = displayedIndex
+    end
 
     if Config.Settings then
         Utils.debugPrint("Total ticket count updated: " .. tostring(UI.totalTickets))
@@ -1074,6 +1096,7 @@ function UI.updateTicketFrame()
 
     -- Show the request as it was actually typed, plus a choice of destinations when the
     -- customer named more than one ("wtb port from sw to if").
+    UI.updateWaitLabel(sender)
     UI.updateRequestText(inviteData)
     UI.updateDestinationChoices(sender, inviteData, currentCity)
 
@@ -1337,6 +1360,14 @@ function UI.showPaginatedTicketWindow()
         local senderValue = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         senderValue:SetPoint("LEFT", senderLabel, "RIGHT", 5, 0)
         ticketFrame.senderValue = senderValue
+
+        -- How long they have been waiting, right-aligned on the same row so it needs no space of
+        -- its own. Dimmed: it is context for choosing whom to serve, not part of the request.
+        local waitValue = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        waitValue:SetPoint("TOPRIGHT", labelContainer, "TOPRIGHT", -4, -50)
+        waitValue:SetJustifyH("RIGHT")
+        waitValue:SetTextColor(0.6, 0.6, 0.6)
+        ticketFrame.waitValue = waitValue
 
         local destinationLabel = labelContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         destinationLabel:SetPoint("TOPLEFT", senderLabel, "BOTTOMLEFT", 0, -10)
