@@ -70,6 +70,7 @@ local DEFAULT_SETTINGS = {
     hideIcon = false,
     disableAFKProtection = false,
     autoCompleteOnArrival = true,
+    autoConvertToRaid = false,
 
     foodItems = {{
         name = "Conjured Sweet Roll",
@@ -271,6 +272,9 @@ function Config.initializeSavedVariables()
     -- is a legitimate stored value that would be overwritten every login.
     if Config.Settings.autoCompleteOnArrival == nil then
         Config.Settings.autoCompleteOnArrival = DEFAULT_SETTINGS.autoCompleteOnArrival
+    end
+    if Config.Settings.autoConvertToRaid == nil then
+        Config.Settings.autoConvertToRaid = DEFAULT_SETTINGS.autoConvertToRaid
     end
     if not Config.Settings.reagentWarningThreshold then
         Config.Settings.reagentWarningThreshold = DEFAULT_SETTINGS.reagentWarningThreshold

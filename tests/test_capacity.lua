@@ -48,6 +48,16 @@ end
 _G.IsInRaid = function()
     return inRaid
 end
+
+local isLeader = true
+local converted = 0
+
+_G.UnitIsGroupLeader = function()
+    return isLeader
+end
+_G.ConvertToRaid = function()
+    converted = converted + 1
+end
 _G.MEMBERS_PER_RAID_GROUP = 5
 _G.MAX_RAID_MEMBERS = 40
 _G.UnitFactionGroup = function()
@@ -95,10 +105,13 @@ local function reset()
     now = 10000
     groupSize = 0
     inRaid = false
+    isLeader = true
+    converted = 0
     invited = {}
     printed = {}
     Events.pendingInvites = {}
     InviteTrade.capacityNoticeShown = false
+    Config.Settings.autoConvertToRaid = false
 end
 
 local function said(fragment)
@@ -243,10 +256,81 @@ groupSize = 6
 InviteTrade.handleInviteAndMessage("Raider", "Raider", "MAGE", "wtb portal sw", false)
 check(#invited == 1, "a raid has room well past four customers")
 
+-- 6. Raid conversion -----------------------------------------------------------------------------------
+
+-- When it can be done at all.
+reset()
+groupSize = 3
+check(InviteTrade.canConvertToRaid() == true, "a led party of three can convert")
+
+inRaid = true
+check(InviteTrade.canConvertToRaid() == false, "a raid is already a raid")
+inRaid = false
+
+groupSize = 1
+check(InviteTrade.canConvertToRaid() == false, "there is no party to convert when solo")
+groupSize = 3
+
+isLeader = false
+check(InviteTrade.canConvertToRaid() == false, "a non-leader cannot convert")
+local allowed, reason = InviteTrade.canConvertToRaid()
+check(reason and reason:find("leader", 1, true), "and should be told why, got " .. tostring(reason))
+isLeader = true
+
+-- Converting says what it did, and warns what it costs the customers.
+reset()
+groupSize = 5
+check(InviteTrade.convertToRaid() == true, "converting a full led party should succeed")
+check(converted == 1, "the client call should be made once, got " .. converted)
+check(said("Converted the group to a raid"), "the conversion should be announced")
+check(said("cannot queue for dungeons"), "the cost to customers should be stated")
+
+-- Refusing explains itself rather than failing quietly.
+reset()
+groupSize = 5
+isLeader = false
+check(InviteTrade.convertToRaid() == false, "a non-leader cannot convert")
+check(converted == 0, "and no client call should be made")
+check(said("Cannot convert to a raid"), "the refusal should be explicit")
+
+-- Off by default: a full group offers the command rather than taking the decision.
+reset()
+groupSize = 5
+InviteTrade.handleInviteAndMessage("Newcomer", "Newcomer", "MAGE", "wtb portal sw", false)
+check(converted == 0, "the default must not convert the group on its own")
+check(said("/Tp raid"), "the option should be offered, got: " .. table.concat(printed, " | "))
+
+-- The offer is not made when it could not be taken.
+reset()
+groupSize = 5
+isLeader = false
+InviteTrade.handleInviteAndMessage("Newcomer", "Newcomer", "MAGE", "wtb portal sw", false)
+check(said("Group is full"), "a full group still says so")
+check(said("/Tp raid") == false, "do not offer a conversion the seller cannot perform")
+
+-- Switched on, a full group converts. The seats arrive with the server, so this customer is still
+-- turned away; the next one gets in.
+reset()
+groupSize = 5
+Config.Settings.autoConvertToRaid = true
+InviteTrade.handleInviteAndMessage("Newcomer", "Newcomer", "MAGE", "wtb portal sw", false)
+check(converted == 1, "with the setting on, a full group should convert")
+check(#invited == 0, "the conversion is not instant, so this request is still refused")
+check(said("/Tp raid") == false, "no point offering what just happened")
+
+-- And once the client reports a raid, there is room again.
+reset()
+groupSize = 6
+inRaid = true
+Config.Settings.autoConvertToRaid = true
+InviteTrade.handleInviteAndMessage("Later", "Later", "MAGE", "wtb portal sw", false)
+check(#invited == 1, "a raid has room for the next customer")
+check(converted == 0, "and nothing further needs converting")
+
 -- ------------------------------------------------------------------------------------------------
 
 if failures > 0 then
     error(string.format("capacity: %d check(s) failed", failures))
 end
 
-realPrint("capacity: group seats, invite holds, the full-group gate and raid headroom all passed\n")
+realPrint("capacity: group seats, invite holds, the full-group gate, raid headroom and conversion all passed\n")

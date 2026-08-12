@@ -239,6 +239,8 @@ function handleCommand(msg)
         else
             printParse(rest)
         end
+    elseif command == "raid" then
+        InviteTrade.convertToRaid()
     elseif command == "queue" then
         UI.toggleQueueOverview()
     elseif command == "list" then
@@ -359,6 +361,7 @@ function handleCommand(msg)
         print("/Tp keywords add/remove intent/destination/service [keyword] - Add or remove a keyword")
         print("/Tp parse [message] - Explain how a request would be matched")
         print("/Tp queue - Toggle the queue overview, grouped by where customers are")
+        print("/Tp raid - Convert the party to a raid, for more than four customers at once")
         print("/Tp list - List tracked tickets")
         print("/Tp add [player] [destination] - Track a customer the addon missed")
         print("/Tp remove [player] - Stop tracking a customer")

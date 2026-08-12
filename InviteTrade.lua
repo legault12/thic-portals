@@ -197,6 +197,12 @@ function InviteTrade.handleInviteAndMessage(sender, playerName, playerClass, mes
 
     local roomToInvite, freeSeats, outstandingInvites = InviteTrade.hasInviteCapacity()
 
+    if not roomToInvite and Config.Settings.autoConvertToRaid and InviteTrade.canConvertToRaid() then
+        -- The conversion is a server round trip, so the seats are not there this instant. Convert
+        -- now and the next customer to ask gets in; this one would need to ask again.
+        InviteTrade.convertToRaid()
+    end
+
     if not roomToInvite then
         -- Say it once per episode: this fires on every request that arrives while full, and the
         -- point is to tell the seller custom is being turned away, not to fill their chat with it.
@@ -204,6 +210,11 @@ function InviteTrade.handleInviteAndMessage(sender, playerName, playerClass, mes
             InviteTrade.capacityNoticeShown = true
             Utils.print("Group is full (" .. freeSeats .. " seat(s) free, " .. outstandingInvites ..
                             " invite(s) already out) - not inviting anyone else for now.")
+
+            -- Offered, not taken: the seller decides whether their group becomes a raid.
+            if not Config.Settings.autoConvertToRaid and InviteTrade.canConvertToRaid() then
+                Utils.print("Use /Tp raid to convert to a raid and take more than four at a time.")
+            end
         end
 
         Utils.debugPrint("No seat for " .. playerName .. "; skipping the invite.")
@@ -370,6 +381,52 @@ function InviteTrade.announceTravelStart(spellName)
         pending.fullName)
 
     Utils.debugPrint("Told " .. pending.sender .. " we are teleporting to " .. pending.city .. ".")
+
+    return true
+end
+
+-- Converting the party to a raid lifts the ceiling from four customers to thirty-nine.
+--
+-- Off by default and never silent. This reaches outside the addon and changes the group everybody
+-- is standing in: a raid cannot use the dungeon finder, and a customer who was in the middle of
+-- ordinary party content will notice. It is the seller's call, so it is a setting and a command
+-- rather than something that quietly happens.
+function InviteTrade.canConvertToRaid()
+    if IsInRaid and IsInRaid() then
+        return false, "the group is already a raid"
+    end
+
+    if not GetNumGroupMembers or GetNumGroupMembers() < 2 then
+        return false, "there is no party to convert"
+    end
+
+    if UnitIsGroupLeader and not UnitIsGroupLeader("player") then
+        return false, "you are not the group leader"
+    end
+
+    if not (C_PartyInfo and C_PartyInfo.ConvertToRaid) and not ConvertToRaid then
+        return false, "this client does not support it"
+    end
+
+    return true
+end
+
+function InviteTrade.convertToRaid()
+    local allowed, reason = InviteTrade.canConvertToRaid()
+
+    if not allowed then
+        Utils.print("Cannot convert to a raid: " .. reason .. ".")
+        return false
+    end
+
+    if C_PartyInfo and C_PartyInfo.ConvertToRaid then
+        C_PartyInfo.ConvertToRaid()
+    else
+        ConvertToRaid()
+    end
+
+    Utils.print("Converted the group to a raid - room for far more customers now.")
+    Utils.print("Customers in a raid cannot queue for dungeons or ordinary party content while grouped.")
 
     return true
 end

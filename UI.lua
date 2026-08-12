@@ -24,6 +24,7 @@ end
 UI.hideIconCheckbox = AceGUI:Create("CheckBox")
 UI.approachModeCheckbox = AceGUI:Create("CheckBox");
 UI.autoCompleteOnArrivalCheckbox = AceGUI:Create("CheckBox");
+UI.autoConvertToRaidCheckbox = AceGUI:Create("CheckBox");
 UI.enableFoodWaterSupportCheckbox = AceGUI:Create("CheckBox");
 UI.disableSmartMatchingCheckbox = AceGUI:Create("CheckBox");
 UI.requireDestinationCheckbox = AceGUI:Create("CheckBox");
@@ -1910,6 +1911,19 @@ function UI.createOptionsPanel()
             end
         end,
         "When a customer turns up in the city they asked for, close their ticket and drop them from the group automatically. Only applies once a portal has actually been cast for them, and never while a trade with them is open.")
+
+    -- Lift the four-customer ceiling automatically. Off by default: it changes the group everyone
+    -- is standing in, which is the seller's call rather than the addon's.
+    addCheckbox(checkboxGroup, "Auto-Convert To Raid When Full", UI.autoConvertToRaidCheckbox,
+        Config.Settings.autoConvertToRaid, function(_, _, value)
+            Config.Settings.autoConvertToRaid = value
+            if value then
+                Utils.print("The party will convert to a raid when it fills.")
+            else
+                Utils.print("The party will not convert on its own - use /Tp raid when you want to.")
+            end
+        end,
+        "When the party fills, convert it to a raid so more than four customers can be served at once. Requires you to be the group leader. Customers in a raid cannot queue for dungeons or ordinary party content while grouped.")
 
     -- Approach Mode Checkbox
     addCheckbox(checkboxGroup, "Approach Mode", UI.approachModeCheckbox, Config.Settings.ApproachMode,
