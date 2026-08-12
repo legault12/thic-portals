@@ -796,7 +796,7 @@ function UI.updateLocationLine(sender, distanceLabel)
 end
 
 
-function UI.updateDestinationChoices(sender, inviteData)
+function UI.updateDestinationChoices(sender, inviteData, currentCity)
     local ticketFrame = UI.ticketFrame
 
     if not ticketFrame or not ticketFrame.destinationLabel then
@@ -808,12 +808,29 @@ function UI.updateDestinationChoices(sender, inviteData)
 
     -- Aliases for one city ("sw" and "stormwind") collapse to a single chip, but only when both
     -- resolve through the explicit map - see Utils.dedupeDestinationCandidates.
-    local candidates = Utils.dedupeDestinationCandidates(
+    local candidates = Utils.rejectCurrentCityCandidates(Utils.dedupeDestinationCandidates(
         Utils.findAllKeywordPositions(inviteData.originalMessage, Config.Settings.DestinationKeywords),
-        inviteData.destination)
+        inviteData.destination), currentCity)
 
-    -- One candidate (or none) needs no disambiguation - keep the plain text label.
-    if #candidates < 2 then
+    -- Filtering the standing city can leave the selected destination off the row. When that
+    -- happens the plain label stays visible so the current pick is still readable, and even a
+    -- single remaining chip is worth showing - it is the correction being offered.
+    local selectionOffered = false
+
+    for _, candidate in ipairs(candidates) do
+        if candidate.keyword == inviteData.destination then
+            selectionOffered = true
+        end
+    end
+
+    -- Nothing to disambiguate: one candidate and it is already what we are casting.
+    if #candidates < 2 and selectionOffered then
+        ticketFrame.destinationValue:Show()
+        hideDestinationChipsFrom(ticketFrame, 1)
+        return
+    end
+
+    if #candidates == 0 then
         ticketFrame.destinationValue:Show()
         hideDestinationChipsFrom(ticketFrame, 1)
         return
@@ -856,14 +873,20 @@ function UI.updateDestinationChoices(sender, inviteData)
         end
     end
 
-    -- A lone chip with nothing beside it is not a choice - fall back to the plain label.
-    if #picked < 2 and #omitted == 0 then
+    -- A lone chip with nothing beside it is not a choice - unless it is the correction we are
+    -- offering because the selected destination was filtered out.
+    if #picked < 2 and #omitted == 0 and selectionOffered then
         ticketFrame.destinationValue:Show()
         hideDestinationChipsFrom(ticketFrame, 1)
         return
     end
 
-    ticketFrame.destinationValue:Hide()
+    -- Keep the label when the row cannot show the current pick, so it is never invisible.
+    if selectionOffered then
+        ticketFrame.destinationValue:Hide()
+    else
+        ticketFrame.destinationValue:Show()
+    end
 
     for index, entry in ipairs(picked) do
         local chip = acquireDestinationChip(ticketFrame, index)
@@ -1015,6 +1038,10 @@ function UI.updateTicketFrame()
         return
     end
 
+    -- Where the customer is standing refines which choices we offer. It never changes which
+    -- destination the ticket has selected: only the user picking a chip does that.
+    local currentCity = Utils.getCustomerCity(sender)
+
     local destination = inviteData.destination or "Requesting..."
 
     -- Update all relevant UI elements
@@ -1031,7 +1058,7 @@ function UI.updateTicketFrame()
     -- Show the request as it was actually typed, plus a choice of destinations when the
     -- customer named more than one ("wtb port from sw to if").
     UI.updateRequestText(inviteData)
-    UI.updateDestinationChoices(sender, inviteData)
+    UI.updateDestinationChoices(sender, inviteData, currentCity)
 
     -- Enable/disable navigation buttons based on current index
     if UI.ticketFrame.prevButton then
@@ -1922,6 +1949,7 @@ function UI.createOptionsPanel()
         Utils.print("No tip message updated.")
     end)
     messageConfigGroup:AddChild(noTipMessageGroup)
+
     messageConfigGroup:AddChild(largeVerticalGap)
 
     -- Creating Keyword Sections

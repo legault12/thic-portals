@@ -546,6 +546,35 @@ end
 -- offers two chips rather than three. Only collapses when BOTH keywords resolve through the
 -- explicit map: the heuristic is not trustworthy enough to merge on, and merging on it would hide
 -- a real choice (it scores "org" and "if" identically, so they would become one chip).
+-- Drop the city the customer is already standing in from their list of possible destinations.
+--
+-- "wtb portal from sw to if" sent by someone standing in Stormwind names two cities, but one of
+-- them is where they are, not where they are going - offering it as a choice is noise. This
+-- refines what is offered only; it never rewrites which destination the ticket has selected.
+--
+-- The standing city goes even when it is the selected one, so long as something else remains for
+-- the user to pick instead. A request that named nowhere else keeps it rather than being reduced
+-- to no choices at all.
+function Utils.rejectCurrentCityCandidates(candidates, currentCity)
+    if not currentCity then
+        return candidates
+    end
+
+    local kept = {}
+
+    for _, candidate in ipairs(candidates) do
+        if Utils.resolveCanonicalDestination(candidate.keyword) ~= currentCity then
+            kept[#kept + 1] = candidate
+        end
+    end
+
+    if #kept == 0 then
+        return candidates
+    end
+
+    return kept
+end
+
 function Utils.dedupeDestinationCandidates(candidates, selectedKeyword)
     local deduped = {}
     local seenCanonical = {}
@@ -680,6 +709,16 @@ function Utils.getPartyUnitToken(name)
     end
 
     return nil
+end
+
+-- The canonical city a tracked customer is standing in, or nil if they are not in one we know.
+-- Wraps the name -> token -> zone -> city chain that both the travel button and the destination
+-- chips need.
+function Utils.getCustomerCity(sender)
+    local unit = Utils.getPartyUnitToken(sender)
+    local zoneName = unit and Utils.getUnitZoneName(unit)
+
+    return zoneName and Utils.resolveCityFromZoneName(zoneName) or nil
 end
 
 -- The zone a unit is standing in, or nil when the client will not tell us. Takes a unit token, not

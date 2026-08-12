@@ -244,6 +244,56 @@ check(Utils.getKnownTeleportSpell("Orgrimmar") == nil, "an unknown teleport must
 check(Utils.getKnownTeleportSpell("Nowhere") == nil, "a non-city must not produce a teleport")
 check(Utils.getKnownTeleportSpell(nil) == nil, "a nil city must not produce a teleport")
 
+-- 8. The city a customer is standing in is not one of their destination choices -----------------
+
+local function keywordsAfterReject(message, currentCity, selected)
+    local candidates = Utils.dedupeDestinationCandidates(Utils.findAllKeywordPositions(message, shippedKeywords),
+        selected)
+    return keywordsOf(Utils.rejectCurrentCityCandidates(candidates, currentCity))
+end
+
+-- The case this exists for: they named where they are and where they want to go.
+check(keywordsAfterReject("wtb portal from sw to if", "Stormwind", "if") == "if",
+    "the city the customer is standing in should not be offered, got " ..
+        keywordsAfterReject("wtb portal from sw to if", "Stormwind", "if"))
+
+-- Aliases resolve first, so the standing city goes whichever way it was written.
+check(keywordsAfterReject("wtb portal from stormwind to if", "Stormwind", "if") == "if",
+    "the standing city should be rejected by canonical city, not by spelling")
+
+-- Somewhere they are not is untouched.
+check(keywordsAfterReject("wtb portal from sw to if", "Darnassus", "if") == "sw,if",
+    "a customer elsewhere should keep every choice")
+
+-- Unknown location changes nothing.
+check(keywordsAfterReject("wtb portal from sw to if", nil, "if") == "sw,if", "no location means no filtering")
+
+-- More than two named: only the standing city goes.
+check(keywordsAfterReject("wtb port sw if org darn", "Orgrimmar", "if") == "sw,if,darn",
+    "only the standing city should be removed, got " .. keywordsAfterReject("wtb port sw if org darn", "Orgrimmar", "if"))
+
+-- The standing city goes even when it is the selected one, as long as something else remains -
+-- the row should offer the correction rather than the place they are already standing.
+check(keywordsAfterReject("wtb portal from sw to if", "Stormwind", "sw") == "if",
+    "the selected keyword must not protect the standing city from being filtered, got " ..
+        keywordsAfterReject("wtb portal from sw to if", "Stormwind", "sw"))
+
+-- The only-candidate safeguard: a request naming nowhere else keeps it rather than showing nothing.
+check(keywordsAfterReject("wtb portal sw", "Stormwind", "sw") == "sw", "never filter down to no choices at all")
+check(keywordsAfterReject("wtb portal sw stormwind", "Stormwind", "sw") == "sw",
+    "aliases for the standing city alone still leave it in place")
+
+-- Filtering refines what is shown; it must never rewrite the ticket's selected destination.
+local ticket = {
+    destination = "sw",
+    originalMessage = "wtb portal from sw to if"
+}
+local filtered = Utils.rejectCurrentCityCandidates(
+    Utils.dedupeDestinationCandidates(Utils.findAllKeywordPositions(ticket.originalMessage, shippedKeywords),
+        ticket.destination), "Stormwind")
+check(keywordsOf(filtered) == "if", "filtering should offer the alternative")
+check(ticket.destination == "sw", "filtering must not mutate the ticket's selected destination")
+
 -- ---------------------------------------------------------------------------------------------
 
 if failures > 0 then
@@ -251,5 +301,5 @@ if failures > 0 then
 end
 
 print(string.format(
-    "portal matcher: %d aliases, %d regressions, faction split, custom fallback, dedupe, %d zone lookups all passed",
+    "portal matcher: %d aliases, %d regressions, faction split, custom fallback, dedupe, %d zone lookups, standing-city rejection and placeholders all passed",
     aliasCount, #regressions, #zoneCases))
