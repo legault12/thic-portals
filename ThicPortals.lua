@@ -239,6 +239,8 @@ function handleCommand(msg)
         else
             printParse(rest)
         end
+    elseif command == "queue" then
+        UI.toggleQueueOverview()
     elseif command == "list" then
         -- Oldest first, the same order the ticket window pages through.
         local ordered = Utils.orderTicketsByArrival(Events.pendingInvites, false)
@@ -356,6 +358,7 @@ function handleCommand(msg)
         print("/Tp help - Show this help message")
         print("/Tp keywords add/remove intent/destination/service [keyword] - Add or remove a keyword")
         print("/Tp parse [message] - Explain how a request would be matched")
+        print("/Tp queue - Toggle the queue overview, grouped by where customers are")
         print("/Tp list - List tracked tickets")
         print("/Tp add [player] [destination] - Track a customer the addon missed")
         print("/Tp remove [player] - Stop tracking a customer")

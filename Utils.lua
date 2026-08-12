@@ -1100,11 +1100,143 @@ end
 -- The canonical city a tracked customer is standing in, or nil if they are not in one we know.
 -- Wraps the name -> token -> zone -> city chain that both the travel button and the destination
 -- chips need.
-function Utils.getCustomerCity(sender)
+-- Where a tracked customer is: the zone they are standing in, and the canonical city if it is one
+-- we can travel to. Returns both because the queue groups by zone - a customer in Elwynn Forest is
+-- somewhere, even though it is nowhere we can teleport.
+function Utils.getCustomerLocation(sender)
     local unit = Utils.getPartyUnitToken(sender)
     local zoneName = unit and Utils.getUnitZoneName(unit)
 
-    return zoneName and Utils.resolveCityFromZoneName(zoneName) or nil
+    if not zoneName then
+        return nil, nil, unit
+    end
+
+    return zoneName, Utils.resolveCityFromZoneName(zoneName), unit
+end
+
+function Utils.getCustomerCity(sender)
+    local _, city = Utils.getCustomerLocation(sender)
+
+    return city
+end
+
+-- The queue, grouped by where the customers are standing.
+--
+-- The seller's actual question is "who do I serve next", and the answer depends on where everyone
+-- is: four customers in one city is one trip, four in four cities is four. Grouping makes that
+-- visible at a glance instead of paging through tickets one at a time.
+--
+-- Ordering: our own zone first, because those can be served without going anywhere, then the rest
+-- by whoever has waited longest in them. Within a group, arrival order. Unknown locations last -
+-- they are the ones we can say least about.
+function Utils.buildQueueOverview(pendingInvites, now)
+    now = now or time()
+
+    local playerZone = Utils.getUnitZoneName("player")
+    local groups = {}
+    local order = {}
+
+    for _, sender in ipairs(Utils.orderTicketsByArrival(pendingInvites, true)) do
+        local inviteData = pendingInvites[sender]
+        local zoneName, city, unit = Utils.getCustomerLocation(sender)
+        local key = zoneName or "?"
+
+        if not groups[key] then
+            groups[key] = {
+                location = zoneName,
+                here = zoneName ~= nil and zoneName == playerZone,
+                city = city,
+                teleport = city and Utils.getKnownTeleportSpell(city) or nil,
+                tickets = {}
+            }
+            order[#order + 1] = groups[key]
+        end
+
+        local group = groups[key]
+        local distance = nil
+
+        -- Only meaningful in the same zone; across a continent the numbers are noise.
+        if group.here and UnitPosition then
+            local playerX, playerY, playerInstance = UnitPosition("player")
+            local targetX, targetY, targetInstance = UnitPosition(unit or sender)
+
+            if playerX and targetX and playerInstance == targetInstance then
+                distance = Utils.calculateDistance(playerX, playerY, targetX, targetY)
+            end
+        end
+
+        group.tickets[#group.tickets + 1] = {
+            sender = sender,
+            destination = inviteData.destination,
+            state = Utils.getTicketState(inviteData),
+            paid = Utils.isTicketPaid(inviteData),
+            waited = inviteData.timestamp and (now - inviteData.timestamp) or 0,
+            distance = distance
+        }
+    end
+
+    table.sort(order, function(a, b)
+        -- Our own zone first, unknown locations last, everything else by longest wait.
+        if a.here ~= b.here then
+            return a.here
+        end
+
+        local aUnknown = a.location == nil
+        local bUnknown = b.location == nil
+
+        if aUnknown ~= bUnknown then
+            return bUnknown
+        end
+
+        local aOldest = a.tickets[1] and a.tickets[1].waited or 0
+        local bOldest = b.tickets[1] and b.tickets[1].waited or 0
+
+        if aOldest ~= bOldest then
+            return aOldest > bOldest
+        end
+
+        return (a.location or "") < (b.location or "")
+    end)
+
+    return order
+end
+
+-- Render the overview as lines, so the same data can go to chat or to a frame.
+function Utils.formatQueueOverview(overview)
+    local lines = {}
+
+    for _, group in ipairs(overview) do
+        local header = group.location or "Location unknown"
+
+        if group.here then
+            header = header .. " (here)"
+        elseif group.teleport then
+            header = header .. " - teleport available"
+        end
+
+        lines[#lines + 1] = header
+
+        for _, ticket in ipairs(group.tickets) do
+            local detail = ticket.state
+
+            if ticket.distance then
+                detail = detail .. ", " .. string.format("%.0f yd", ticket.distance)
+            end
+
+            if ticket.paid then
+                detail = detail .. ", paid"
+            end
+
+            lines[#lines + 1] = string.format("  %-14s %-8s %-22s %s", ticket.sender,
+                ticket.destination or "?", detail, Utils.formatWaitTime(ticket.waited))
+        end
+    end
+
+    if #lines == 0 then
+        lines[1] = "No customers waiting."
+    end
+
+    return lines
 end
 
 -- The zone a unit is standing in, or nil when the client will not tell us. Takes a unit token, not

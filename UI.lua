@@ -1084,6 +1084,8 @@ function UI.updateTicketList()
     UI.ticketList, UI.currentTicketIndex, UI.totalTickets = Utils.buildTicketQueue(Events.pendingInvites,
         displayedSender, UI.currentTicketIndex)
 
+    UI.refreshQueueOverview()
+
     if Config.Settings then
         Utils.debugPrint("Total ticket count updated: " .. tostring(UI.totalTickets))
     end
@@ -1324,6 +1326,112 @@ function UI.updateTicketFrame()
                 end
             end
         end, 180)
+    end
+end
+
+-- The queue overview: every waiting customer at once, grouped by where they are standing.
+--
+-- The ticket window answers "what does this customer want"; this answers "who should I serve next",
+-- which is a different question and the one that gets hard when several people are waiting in
+-- different cities.
+--
+-- Deliberately read-only. It is a pane of FontStrings with no secure children, so none of the
+-- protected-frame rules that govern the ticket window apply to it, and nothing here can page the
+-- ticket window out from under a click.
+local queueOverviewTicker = nil
+
+function UI.createQueueOverview()
+    if UI.queueFrame then
+        return UI.queueFrame
+    end
+
+    local frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    frame:SetSize(380, 160)
+    frame:SetPoint("CENTER", UIParent, "CENTER", -UIParent:GetWidth() * 0.25, 0)
+    frame:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true,
+        tileSize = 32,
+        edgeSize = 32,
+        insets = {
+            left = 11,
+            right = 12,
+            top = 12,
+            bottom = 11
+        }
+    })
+    frame:SetBackdropColor(0, 0, 0, 1)
+    frame:EnableMouse(true)
+    frame:SetMovable(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+
+    local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+    closeButton:SetPoint("TOPRIGHT", -5, -5)
+    closeButton:SetScript("OnClick", function()
+        frame:Hide()
+    end)
+
+    local title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    title:SetPoint("TOP", 0, -16)
+    title:SetText("QUEUE")
+
+    local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    body:SetPoint("TOPLEFT", 18, -38)
+    body:SetWidth(344)
+    body:SetJustifyH("LEFT")
+    body:SetJustifyV("TOP")
+    frame.body = body
+
+    -- Waits count up, so it needs its own heartbeat rather than borrowing the ticket window's,
+    -- which only runs while a ticket is on screen.
+    frame:SetScript("OnShow", function()
+        if queueOverviewTicker then
+            queueOverviewTicker:Cancel()
+        end
+
+        queueOverviewTicker = C_Timer.NewTicker(1, function()
+            UI.refreshQueueOverview()
+        end)
+    end)
+
+    frame:SetScript("OnHide", function()
+        if queueOverviewTicker then
+            queueOverviewTicker:Cancel()
+            queueOverviewTicker = nil
+        end
+    end)
+
+    frame:Hide()
+
+    UI.queueFrame = frame
+
+    return frame
+end
+
+function UI.refreshQueueOverview()
+    local frame = UI.queueFrame
+
+    if not frame or not frame:IsShown() then
+        return
+    end
+
+    local lines = Utils.formatQueueOverview(Utils.buildQueueOverview(Events.pendingInvites))
+
+    frame.body:SetText(table.concat(lines, "\n"))
+    frame:SetHeight(math.max(90, 56 + #lines * 13))
+end
+
+function UI.toggleQueueOverview()
+    local frame = UI.createQueueOverview()
+
+    if frame:IsShown() then
+        frame:Hide()
+    else
+        frame:Show()
+        UI.refreshQueueOverview()
     end
 end
 
