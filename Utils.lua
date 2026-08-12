@@ -165,6 +165,26 @@ local function classifyPrecedingText(text)
     return 0
 end
 
+-- How the word before a location at this position marks it: "destination", "origin", or "none".
+-- findRequestedDestination only reports this for the location it picked; the /Tp parse diagnostic
+-- needs it for every candidate, to explain why one was chosen over another.
+function Utils.markerForPosition(message, position)
+    if not message or not position then
+        return "none"
+    end
+
+    local padded = " " .. message:lower() .. " "
+    local score = classifyPrecedingText(padded:sub(1, position - 1))
+
+    if score > 0 then
+        return "destination"
+    elseif score < 0 then
+        return "origin"
+    end
+
+    return "none"
+end
+
 -- Function to work out which location in a message the customer actually wants to travel to.
 --
 -- Returns the same (position, keyword) pair as findKeywordPosition, plus an originOnly flag,

@@ -355,6 +355,70 @@ function InviteTrade.announceTravelStart(spellName)
     return true
 end
 
+-- Explain what the matcher makes of a message, for /Tp parse.
+--
+-- Calls the same matching helpers the live path uses rather than reimplementing them, so the
+-- explanation cannot drift from the behaviour it is describing. Pure with respect to the message:
+-- it reads settings and touches no ticket state.
+function InviteTrade.describeMatch(message)
+    local keywords = Config.Settings.DestinationKeywords
+
+    local commonPhrase = Utils.messageHasPhraseOrKeyword(message, Config.Settings.commonPhrases)
+    local intentPosition, intentKeyword = Utils.findKeywordPosition(message, Config.Settings.IntentKeywords)
+    local servicePosition, serviceKeyword = Utils.findKeywordPosition(message, Config.Settings.ServiceKeywords)
+
+    local candidates = {}
+
+    for _, candidate in ipairs(Utils.findAllKeywordPositions(message, keywords)) do
+        candidates[#candidates + 1] = {
+            keyword = candidate.keyword,
+            marker = Utils.markerForPosition(message, candidate.position),
+            canonical = Utils.resolveCanonicalDestination(candidate.keyword)
+        }
+    end
+
+    local deduped = {}
+
+    for _, candidate in ipairs(Utils.dedupeDestinationCandidates(Utils.findAllKeywordPositions(message, keywords))) do
+        deduped[#deduped + 1] = candidate.keyword
+    end
+
+    local position, decision, originOnly = Utils.findRequestedDestination(message, keywords)
+    local portal = decision and Utils.getMatchingPortal(decision) or nil
+
+    -- Mirrors handleInviteAndMessage: common phrase first, then the intent-before-service rule.
+    local advancedMatch = intentPosition and servicePosition and servicePosition > intentPosition
+    local matched = (commonPhrase and true or false) or
+                        (not Config.Settings.disableSmartMatching and advancedMatch and true or false)
+    local blocked = nil
+
+    if matched and Config.Settings.requireDestination and not decision then
+        blocked = "Require Destination is on and no destination was found"
+    end
+
+    if Utils.messageHasPhraseOrKeyword(message, Config.Settings.KeywordBanList) then
+        blocked = "message contains a banned keyword"
+    end
+
+    return {
+        message = message,
+        commonPhrase = commonPhrase or nil,
+        intentKeyword = intentKeyword,
+        intentPosition = intentPosition,
+        serviceKeyword = serviceKeyword,
+        servicePosition = servicePosition,
+        candidates = candidates,
+        deduped = deduped,
+        decision = decision,
+        decisionPosition = position,
+        originOnly = originOnly,
+        portal = portal,
+        matched = matched,
+        blocked = blocked,
+        wouldInvite = matched and not blocked
+    }
+end
+
 -- Function to set an expiry timer for pending invites
 function InviteTrade.setSenderExpiryTimer(playerName)
     C_Timer.After(180, function()
