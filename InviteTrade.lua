@@ -560,6 +560,67 @@ function InviteTrade.describeMatch(message)
     }
 end
 
+-- Close a ticket by itself once the customer is standing in the city they asked for.
+--
+-- Arrival is a far better signal than the distance heuristic below, which only infers that somebody
+-- wandered off. Knowing they are in Ironforge when Ironforge is what they asked for means the job
+-- is done, so there is nothing left for the seller to confirm.
+--
+-- Three things hold it back:
+--
+--   * The portal must actually have been cast for this ticket. Otherwise a customer who asks for a
+--     portal to the city they are already standing in would be completed before being served.
+--   * Never while a trade with them is open, or closing the ticket would lose the thank-you we
+--     still owe them once it completes.
+--   * The destination has to resolve to a city we recognise; a custom keyword we cannot place
+--     cannot be compared against where they are.
+--
+-- Completing also drops them from the group. A served customer holding a seat is precisely what
+-- the capacity limit exists to avoid, and it is what the ticket's own Remove button does.
+function InviteTrade.completeIfArrived(sender)
+    if not Config.Settings.autoCompleteOnArrival then
+        return false
+    end
+
+    local inviteData = Events.pendingInvites[sender]
+
+    if not inviteData or not inviteData.destination or not inviteData.portalCastAt then
+        return false
+    end
+
+    if Config.currentTraderName == sender then
+        Utils.debugPrint("Not closing " .. sender .. "'s ticket while a trade is open.")
+        return false
+    end
+
+    local wanted = Utils.resolveCanonicalDestination(inviteData.destination)
+
+    if not wanted then
+        return false
+    end
+
+    local _, city = Utils.getCustomerLocation(sender)
+
+    if city ~= wanted then
+        return false
+    end
+
+    Utils.markTicketComplete(inviteData)
+    Utils.print(sender .. " arrived in " .. city .. " - closing the ticket.")
+
+    Events.pendingInvites[sender] = nil
+    InviteTrade.clearTravelAnnouncement(sender)
+
+    if UninviteUnit then
+        UninviteUnit(inviteData.fullName or sender)
+    end
+
+    UI.updateTicketList()
+    UI.updateTicketFrame()
+
+    return true
+end
+
 -- Function to set an expiry timer for pending invites
 function InviteTrade.setSenderExpiryTimer(playerName)
     C_Timer.After(180, function()
@@ -582,6 +643,13 @@ function InviteTrade.watchForPlayerProximity(sender)
 
     ticker = C_Timer.NewTicker(1, function()
         if UnitInParty(sender) then
+            -- Arrival closes the ticket outright. The distance heuristic below stays as the
+            -- fallback for customers whose location we cannot read.
+            if InviteTrade.completeIfArrived(sender) then
+                ticker:Cancel()
+                return
+            end
+
             if Utils.isPlayerWithinRange(sender, Config.Settings.distanceInferringClose) then
                 if not flagProximityReached then
                     Utils.print(sender .. " is nearby and might be taking the portal.")

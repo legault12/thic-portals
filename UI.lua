@@ -23,6 +23,7 @@ end
 -- Initialize saved variables to Config (Version 1.3.0)
 UI.hideIconCheckbox = AceGUI:Create("CheckBox")
 UI.approachModeCheckbox = AceGUI:Create("CheckBox");
+UI.autoCompleteOnArrivalCheckbox = AceGUI:Create("CheckBox");
 UI.enableFoodWaterSupportCheckbox = AceGUI:Create("CheckBox");
 UI.disableSmartMatchingCheckbox = AceGUI:Create("CheckBox");
 UI.requireDestinationCheckbox = AceGUI:Create("CheckBox");
@@ -1897,6 +1898,18 @@ function UI.createOptionsPanel()
                 Utils.print("Global channels enabled.")
             end
         end, "Enables or disables the addon from listening to global channels for requests.")
+
+    -- Close a ticket by itself once the customer reaches the city they asked for.
+    addCheckbox(checkboxGroup, "Auto-Complete On Arrival", UI.autoCompleteOnArrivalCheckbox,
+        Config.Settings.autoCompleteOnArrival, function(_, _, value)
+            Config.Settings.autoCompleteOnArrival = value
+            if value then
+                Utils.print("Tickets will close themselves when the customer reaches their destination.")
+            else
+                Utils.print("Tickets will wait for you to close them.")
+            end
+        end,
+        "When a customer turns up in the city they asked for, close their ticket and drop them from the group automatically. Only applies once a portal has actually been cast for them, and never while a trade with them is open.")
 
     -- Approach Mode Checkbox
     addCheckbox(checkboxGroup, "Approach Mode", UI.approachModeCheckbox, Config.Settings.ApproachMode,

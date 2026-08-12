@@ -69,6 +69,7 @@ local DEFAULT_SETTINGS = {
     optionsPanelHidden = true,
     hideIcon = false,
     disableAFKProtection = false,
+    autoCompleteOnArrival = true,
 
     foodItems = {{
         name = "Conjured Sweet Roll",
@@ -265,6 +266,11 @@ function Config.initializeSavedVariables()
     end
     if not Config.Settings.disableAFKProtection then
         Config.Settings.disableAFKProtection = DEFAULT_SETTINGS.disableAFKProtection
+    end
+    -- A boolean default of true cannot use the "if not set" pattern the others use, since false
+    -- is a legitimate stored value that would be overwritten every login.
+    if Config.Settings.autoCompleteOnArrival == nil then
+        Config.Settings.autoCompleteOnArrival = DEFAULT_SETTINGS.autoCompleteOnArrival
     end
     if not Config.Settings.reagentWarningThreshold then
         Config.Settings.reagentWarningThreshold = DEFAULT_SETTINGS.reagentWarningThreshold
