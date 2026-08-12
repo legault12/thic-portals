@@ -193,6 +193,24 @@ function InviteTrade.handleInviteAndMessage(sender, playerName, playerClass, mes
         return
     end
 
+    -- The group itself is the hard limit, and it is smaller than the ticket setting: a party seats
+    -- four customers whatever maxSimultaneousTickets says. Inviting past it fails, and the customer
+    -- is left holding a record that blocks them from asking again until it expires.
+    local slots, free, outstanding = Utils.availableInviteSlots(Events.pendingInvites)
+
+    if slots < 1 then
+        if not InviteTrade.capacityNoticeShown then
+            InviteTrade.capacityNoticeShown = true
+            Utils.print("Group is full (" .. free .. " seat(s) free, " .. outstanding ..
+                            " invite(s) already out) - not inviting anyone else for now.")
+        end
+
+        Utils.debugPrint("No seat for " .. playerName .. "; skipping the invite.")
+        return
+    end
+
+    InviteTrade.capacityNoticeShown = false
+
     -- Here we deal with the player ban list
     if Utils.isPlayerBanned(sender) then
         Utils.debugPrint("Player " .. sender .. " is on the ban list. No invite sent.")

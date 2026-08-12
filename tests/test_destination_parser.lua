@@ -67,6 +67,11 @@ assert(matches[2].keyword == "sw", "choices should retain message order")
 -- request, but the same phrasing cannot overwrite an existing ticket's destination.
 _G.Events = {pendingInvites = {}}
 _G.UI = {}
+-- handleInviteAndMessage checks group capacity before matching, and that reads the clock. The
+-- invite helpers below are stubbed, so this is the only WoW global the real path still needs.
+_G.time = function()
+    return 0
+end
 local InviteTrade = dofile(addonDirectory .. "/InviteTrade.lua")
 
 for _, message in ipairs({

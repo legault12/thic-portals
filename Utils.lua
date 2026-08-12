@@ -636,6 +636,45 @@ function Utils.indexOfTicket(ticketList, sender)
     return nil
 end
 
+-- An outstanding invite holds a seat for about this long. WoW's own invite popup lapses after
+-- roughly a minute, while our record lives for three, so reserving for the full record would keep
+-- turning customers away long after the seat came free.
+Utils.INVITE_SEAT_HOLD = 60
+
+-- Seats free in the current group, plus what is using them.
+--
+-- A party holds five including you, a raid forty. Solo still counts as occupying a seat, because
+-- GetNumGroupMembers reports zero when ungrouped.
+function Utils.getGroupCapacity()
+    local maximum = (IsInRaid and IsInRaid()) and (MAX_RAID_MEMBERS or 40) or (MEMBERS_PER_RAID_GROUP or 5)
+    local used = (GetNumGroupMembers and GetNumGroupMembers()) or 0
+
+    if used < 1 then
+        used = 1
+    end
+
+    return math.max(0, maximum - used), used, maximum
+end
+
+-- Seats we can actually offer, after holding one for each invite already out.
+--
+-- Without this the addon kept inviting past a full party: the invite failed, the customer saw
+-- nothing useful, and their record sat burning its cooldown until it expired.
+function Utils.availableInviteSlots(pendingInvites, now)
+    local free, used, maximum = Utils.getGroupCapacity()
+    local outstanding = 0
+
+    now = now or time()
+
+    for _, inviteData in pairs(pendingInvites or {}) do
+        if not inviteData.hasJoined and inviteData.timestamp and (now - inviteData.timestamp) < Utils.INVITE_SEAT_HOLD then
+            outstanding = outstanding + 1
+        end
+    end
+
+    return math.max(0, free - outstanding), free, outstanding, used, maximum
+end
+
 -- How long a cast portal stays usable. Derived, not stored: the ticket records when the portal was
 -- cast and whether it is still standing is computed from that.
 Utils.PORTAL_ALIVE_WINDOW = 60

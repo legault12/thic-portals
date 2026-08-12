@@ -257,11 +257,16 @@ function handleCommand(msg)
                 inviteData.destinationLocked and "  (locked)" or ""))
         end
 
+        local slots, free, outstanding, used, maximum = Utils.availableInviteSlots(Events.pendingInvites)
+
         if count == 0 then
             Utils.print("No tickets are being tracked.")
         else
             Utils.print(count .. " ticket(s) tracked.")
         end
+
+        Utils.print(string.format("Group %d/%d, %d seat(s) free, %d invite(s) out, %d more can be invited.", used,
+            maximum, free, outstanding, slots))
     elseif command == "add" then
         local name, destination = rest:match("^(%S+)%s*(.-)$")
 
