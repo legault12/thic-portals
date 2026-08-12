@@ -636,6 +636,37 @@ function Utils.indexOfTicket(ticketList, sender)
     return nil
 end
 
+-- Which ticket to show once the queue has been rebuilt.
+--
+-- Follow the customer being handled if they are still queued. If they have gone, hold their slot
+-- so whoever moved up takes their place, clamped to the end of a shorter queue - removing the last
+-- ticket while viewing it would otherwise leave the index past the end, and updateTicketFrame
+-- returns early on a missing sender, stranding the previous customer's ticket on screen. An empty
+-- queue parks at 1 so the index is never out of range.
+function Utils.resolveTicketIndex(ticketList, displayedSender, currentIndex)
+    local total = #(ticketList or {})
+
+    if total == 0 then
+        return 1
+    end
+
+    local stillQueued = Utils.indexOfTicket(ticketList, displayedSender)
+
+    if stillQueued then
+        return stillQueued
+    end
+
+    return math.max(1, math.min(currentIndex or 1, total))
+end
+
+-- The whole queue rebuild: ordered senders, which one to display, and the count.
+-- Kept here rather than in the UI so it can be tested without a running client.
+function Utils.buildTicketQueue(pendingInvites, displayedSender, currentIndex)
+    local ticketList = Utils.orderTicketsByArrival(pendingInvites, true)
+
+    return ticketList, Utils.resolveTicketIndex(ticketList, displayedSender, currentIndex), #ticketList
+end
+
 -- Whether a keyword can actually produce a portal: a shipped alias, or one the user has configured
 -- that still resolves. Membership is the real gate - the heuristic fallback finds a "best" match
 -- for almost any text, so matching alone would accept arbitrary input and build a locked, unusable

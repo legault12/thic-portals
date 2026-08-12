@@ -1036,21 +1036,13 @@ end
 
 -- Helper to update ticketList from pendingInvites
 function UI.updateTicketList()
-    -- Oldest request first. Only customers who have joined the party get a ticket.
-    UI.ticketList = Utils.orderTicketsByArrival(Events.pendingInvites, true)
-
-    UI.totalTickets = #UI.ticketList
-
-    -- Follow the customer being handled rather than the position they happened to occupy: the queue
-    -- reorders underneath as tickets come and go, and paging out from under the user mid-click is
-    -- how you cast the wrong portal.
+    -- Oldest request first, following the customer being handled rather than the position they
+    -- happened to occupy: the queue reorders underneath as tickets come and go, and paging out from
+    -- under the user mid-click is how you cast the wrong portal.
     local displayedSender = UI.ticketFrame and UI.ticketFrame.currentSender
 
-    local displayedIndex = Utils.indexOfTicket(UI.ticketList, displayedSender)
-
-    if displayedIndex then
-        UI.currentTicketIndex = displayedIndex
-    end
+    UI.ticketList, UI.currentTicketIndex, UI.totalTickets = Utils.buildTicketQueue(Events.pendingInvites,
+        displayedSender, UI.currentTicketIndex)
 
     if Config.Settings then
         Utils.debugPrint("Total ticket count updated: " .. tostring(UI.totalTickets))

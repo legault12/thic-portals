@@ -388,6 +388,95 @@ local after = {"Malcolm", "Yolanda"}
 check(Utils.indexOfTicket(before, "Malcolm") == 2 and Utils.indexOfTicket(after, "Malcolm") == 1,
     "following by name should track the customer across a reorder")
 
+-- 8b2. Pagination across removals ------------------------------------------------------------------
+
+-- Drives the same buildTicketQueue that UI.updateTicketList calls, against real tickets built by
+-- the add command. UI.updateTicketList itself is now a four-line adapter around this.
+local function joinedQueue(names, times)
+    reset()
+    for index, name in ipairs(names) do
+        clock = times[index]
+        run("add " .. name .. " if")
+        Events.pendingInvites[name].hasJoined = true
+    end
+end
+
+local function rebuild(displayedSender, currentIndex)
+    local list, index, total = Utils.buildTicketQueue(Events.pendingInvites, displayedSender, currentIndex)
+    return list, index, total
+end
+
+-- Anna (oldest), Boris, Cara.
+joinedQueue({"Anna", "Boris", "Cara"}, {100, 200, 300})
+
+local list, index = rebuild("Boris", 2)
+check(table.concat(list, ",") == "Anna,Boris,Cara", "the queue should be in arrival order")
+check(index == 2, "the displayed customer keeps their place while queued")
+
+-- Removing the FIRST ticket while viewing it: the customer who moved up takes the slot.
+joinedQueue({"Anna", "Boris", "Cara"}, {100, 200, 300})
+Events.pendingInvites["Anna"] = nil
+list, index = rebuild("Anna", 1)
+check(index == 1 and list[index] == "Boris", "removing the displayed first ticket should show Boris, got " ..
+    tostring(list[index]))
+
+-- Removing a MIDDLE ticket while viewing it: likewise.
+joinedQueue({"Anna", "Boris", "Cara"}, {100, 200, 300})
+Events.pendingInvites["Boris"] = nil
+list, index = rebuild("Boris", 2)
+check(index == 2 and list[index] == "Cara", "removing the displayed middle ticket should show Cara, got " ..
+    tostring(list[index]))
+
+-- Removing the LAST ticket while viewing it: the index must clamp, not run off the end.
+joinedQueue({"Anna", "Boris", "Cara"}, {100, 200, 300})
+Events.pendingInvites["Cara"] = nil
+list, index = rebuild("Cara", 3)
+check(index <= #list, "the index must never exceed the queue, got " .. index .. " of " .. #list)
+check(index == 2 and list[index] == "Boris", "removing the displayed last ticket should show the new last, got " ..
+    tostring(list[index]))
+
+-- Removing the ONLY ticket parks at 1 on an empty queue rather than leaving a stale index.
+joinedQueue({"Anna"}, {100})
+Events.pendingInvites["Anna"] = nil
+-- currentIndex is deliberately not 1 here: parking at 1 has to be the code's doing, not the
+-- argument's, or the assertion proves nothing.
+list, index = rebuild("Anna", 3)
+check(#list == 0, "the queue should be empty")
+check(index == 1, "an empty queue should park the index at 1, got " .. index)
+
+-- Someone else leaving does not move the customer being handled.
+joinedQueue({"Anna", "Boris", "Cara"}, {100, 200, 300})
+Events.pendingInvites["Anna"] = nil
+list, index = rebuild("Cara", 3)
+check(list[index] == "Cara", "an unrelated removal must not change who is displayed, got " .. tostring(list[index]))
+
+-- Following the customer must be distinguishable from merely clamping the old index. With four
+-- tickets, viewing the third, and the first removed, the two answers diverge: the displayed
+-- customer is now at 2, while clamping the old index 3 to the new length of 3 would land on a
+-- different customer entirely.
+joinedQueue({"Anna", "Boris", "Cara", "Dmitri"}, {100, 200, 300, 400})
+Events.pendingInvites["Anna"] = nil
+list, index = rebuild("Cara", 3)
+check(list[index] == "Cara",
+    "the displayed customer must be followed, not approximated by the old index - got " .. tostring(list[index]))
+check(index == 2, "Cara should now be at position 2, got " .. index)
+
+-- A new arrival appends and leaves the displayed customer alone.
+joinedQueue({"Anna", "Boris"}, {100, 200})
+clock = 400
+run("add Dmitri if")
+Events.pendingInvites["Dmitri"].hasJoined = true
+list, index = rebuild("Anna", 1)
+check(table.concat(list, ",") == "Anna,Boris,Dmitri", "a new ticket should append at the end")
+check(list[index] == "Anna", "a new arrival must not move the displayed customer")
+
+-- Tickets that have not joined stay out of the window queue entirely.
+joinedQueue({"Anna"}, {100})
+clock = 500
+run("add Waiting if")
+list = rebuild("Anna", 1)
+check(table.concat(list, ",") == "Anna", "an invited-but-not-joined customer has no ticket yet")
+
 -- 8c. Wait formatting ------------------------------------------------------------------------------
 
 check(Utils.formatWaitTime(0) == "0s", "zero reads as seconds")
